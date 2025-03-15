@@ -14,7 +14,7 @@ import (
 	"gorm.io/datatypes"
 )
 
-// Factory provides methods for creating test webhook receipts
+// Factory provides methods for creating webhook receipts
 type Factory struct {
 	secrets map[string]string
 }
@@ -35,17 +35,12 @@ func NewFactory() *Factory {
 		secrets["sendgrid"] = secret
 	}
 
-	// Only add test secret in test environment
-	if os.Getenv("GO_ENV") == "test" {
-		secrets["test"] = os.Getenv("TEST_WEBHOOK_SECRET")
-	}
-
 	return &Factory{
 		secrets: secrets,
 	}
 }
 
-// CreateWebhookReceipt creates a new webhook receipt for testing
+// CreateWebhookReceipt creates a new webhook receipt
 func (f *Factory) CreateWebhookReceipt(source, event string, payload map[string]interface{}) *models.WebhookReceipt {
 	// Generate a signature
 	payloadBytes, _ := json.Marshal(payload)
@@ -80,7 +75,7 @@ func (f *Factory) CreateWebhookReceipt(source, event string, payload map[string]
 	}
 }
 
-// CreateGithubWebhook creates a GitHub webhook receipt for testing
+// CreateGithubWebhook creates a GitHub webhook receipt
 func (f *Factory) CreateGithubWebhook(event string) *models.WebhookReceipt {
 	payload := map[string]interface{}{
 		"event":       event,
@@ -94,7 +89,7 @@ func (f *Factory) CreateGithubWebhook(event string) *models.WebhookReceipt {
 	return f.CreateWebhookReceipt("github", event, payload)
 }
 
-// CreateStripeWebhook creates a Stripe webhook receipt for testing
+// CreateStripeWebhook creates a Stripe webhook receipt
 func (f *Factory) CreateStripeWebhook(event string) *models.WebhookReceipt {
 	payload := map[string]interface{}{
 		"event":       event,

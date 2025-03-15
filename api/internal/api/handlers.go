@@ -25,6 +25,35 @@ func NewHandlers(jobQueue queue.JobQueueInterface, webhookService *webhook.Servi
 	}
 }
 
+// CreateRandomTextJob handles creating a random text job
+func (h *Handlers) CreateRandomTextJob(c *gin.Context) {
+	var request struct {
+		Length int `json:"length"`
+	}
+
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
+		return
+	}
+
+	if request.Length <= 0 || request.Length > 1000 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Length must be between 1 and 1000"})
+		return
+	}
+
+	jobID, err := h.jobQueue.AddJob("random-text", request)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create job"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"id":   jobID,
+		"type": "random-text",
+		"data": request,
+	})
+}
+
 // ReceiveWebhook handles incoming webhooks
 func (h *Handlers) ReceiveWebhook(c *gin.Context) {
 	// Get source from URL parameter

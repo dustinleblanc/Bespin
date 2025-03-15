@@ -16,24 +16,6 @@
     <p class="text-center text-gray-600 mb-8">Cloud Job Processing Platform</p>
 
     <div class="max-w-4xl mx-auto">
-      <!-- API Test Section -->
-      <div class="bg-white shadow-md rounded-lg p-6 mb-6">
-        <h2 class="text-2xl font-bold mb-4">API Connection</h2>
-        <div class="flex items-center mb-4">
-          <button
-            class="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded"
-            @click="testApi"
-          >
-            Test API Connection
-          </button>
-          <span v-if="testResponse" class="ml-4 text-green-500">Connected!</span>
-          <span v-if="testError" class="ml-4 text-red-500">{{ testError }}</span>
-        </div>
-        <div v-if="testResponse" class="bg-gray-100 p-4 rounded">
-          <pre>{{ JSON.stringify(testResponse, null, 2) }}</pre>
-        </div>
-      </div>
-
       <!-- Job Creation Section -->
       <div class="bg-white shadow-md rounded-lg p-6 mb-6">
         <h2 class="text-2xl font-bold mb-4">Create Random Text Job</h2>
@@ -136,11 +118,6 @@
 import { ref, onMounted, onUnmounted } from 'vue'
 
 // Define types for API responses
-interface TestResponse {
-  message: string
-  timestamp?: string
-}
-
 interface Job {
   id: string
   type: string
@@ -163,33 +140,12 @@ interface JobUpdate {
 }
 
 const apiUrl = useRuntimeConfig().public.apiUrl
-const testResponse = ref<TestResponse | null>(null)
-const testError = ref<string | null>(null)
 const jobResponse = ref<Job | null>(null)
 const jobError = ref<string | null>(null)
 const jobUpdates = ref<JobUpdate[]>([])
 const textLength = ref(100)
 const wsConnected = ref(false)
 let ws: WebSocket | null = null
-
-// Test API connection
-async function testApi() {
-  try {
-    console.info('Testing API connection to:', `${apiUrl}/api/test`)
-    testError.value = null
-    const response = await fetch(`${apiUrl}/api/test`)
-    if (!response.ok) {
-      const errorText = await response.text()
-      throw new Error(`API test failed with status ${response.status}: ${errorText}`)
-    }
-    testResponse.value = await response.json()
-    console.info('API test response:', testResponse.value)
-  } catch (err) {
-    console.error('API test error:', err)
-    testError.value = err instanceof Error ? err.message : 'Unknown error'
-    testResponse.value = null
-  }
-}
 
 // Create a random text job
 async function createRandomTextJob() {
@@ -269,9 +225,9 @@ function disconnectWebSocket() {
   }
 }
 
-// Call testApi on component mount
+// Connect to WebSocket on component mount
 onMounted(() => {
-  testApi()
+  connectWebSocket()
 })
 
 // Clean up WebSocket on component unmount

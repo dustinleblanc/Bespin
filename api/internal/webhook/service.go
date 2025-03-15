@@ -36,11 +36,6 @@ func NewService(repository Repository) *Service {
 		secrets["sendgrid"] = secret
 	}
 
-	// Only add test secret in test environment
-	if os.Getenv("GO_ENV") == "test" {
-		secrets["test"] = os.Getenv("TEST_WEBHOOK_SECRET")
-	}
-
 	return &Service{
 		repository: repository,
 		logger:     log.New(log.Writer(), "[WebhookService] ", log.LstdFlags),

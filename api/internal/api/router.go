@@ -24,7 +24,7 @@ func SetupRouter(handlers *Handlers, wsServer *websocket.Server) *gin.Engine {
 	})
 
 	// WebSocket handler
-	r.GET("/socket.io/*any", func(c *gin.Context) {
+	r.GET("/api/ws/jobs", func(c *gin.Context) {
 		wsServer.ServeWs(c.Writer, c.Request)
 	})
 
@@ -36,6 +36,11 @@ func SetupRouter(handlers *Handlers, wsServer *websocket.Server) *gin.Engine {
 			webhooks.POST("/:source", handlers.ReceiveWebhook)
 			webhooks.GET("/:id", handlers.GetWebhook)
 			webhooks.GET("", handlers.ListWebhooks)
+		}
+
+		jobs := api.Group("/jobs")
+		{
+			jobs.POST("/random-text", handlers.CreateRandomTextJob)
 		}
 	}
 
