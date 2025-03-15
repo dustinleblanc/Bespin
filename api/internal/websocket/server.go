@@ -11,13 +11,13 @@ import (
 
 // Server handles WebSocket connections
 type Server struct {
-	jobQueue   *queue.JobQueue
+	jobQueue   queue.JobQueueInterface
 	clients    map[*Client]bool
 	register   chan *Client
 	unregister chan *Client
 	broadcast  chan []byte
-	upgrader   websocket.Upgrader
 	logger     *log.Logger
+	upgrader   websocket.Upgrader
 }
 
 // Client represents a WebSocket client
@@ -29,13 +29,14 @@ type Client struct {
 }
 
 // NewServer creates a new WebSocket server
-func NewServer(jobQueue *queue.JobQueue) *Server {
+func NewServer(jobQueue queue.JobQueueInterface) *Server {
 	return &Server{
 		jobQueue:   jobQueue,
 		clients:    make(map[*Client]bool),
 		register:   make(chan *Client),
 		unregister: make(chan *Client),
 		broadcast:  make(chan []byte),
+		logger:     log.New(log.Writer(), "[WebSocket] ", log.LstdFlags),
 		upgrader: websocket.Upgrader{
 			ReadBufferSize:  1024,
 			WriteBufferSize: 1024,
@@ -43,7 +44,6 @@ func NewServer(jobQueue *queue.JobQueue) *Server {
 				return true // Allow all origins for now
 			},
 		},
-		logger: log.New(log.Writer(), "[WebSocket] ", log.LstdFlags),
 	}
 }
 
