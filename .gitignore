@@ -42,3 +42,35 @@ coverage
 
 # Docker volumes
 postgres_data/
+
+# Secrets and keys
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+*.password
+*.secret
+
+# Build output
+bin/
+
+# IDE and editor files
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Test coverage
+*.out
+*.test
+*.prof
+
+# Temporary files
+*.tmp
+*.temp
+temp/
+tmp/
