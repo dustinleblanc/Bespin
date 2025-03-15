@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"io"
 	"net/http"
-	"time"
 
 	"github.com/dustinleblanc/go-bespin/internal/queue"
 	"github.com/dustinleblanc/go-bespin/internal/webhook"
@@ -24,27 +23,6 @@ func NewHandlers(jobQueue *queue.JobQueue, webhookService *webhook.Service) *Han
 		jobQueue:       jobQueue,
 		webhookService: webhookService,
 	}
-}
-
-// GetRoot handles the root endpoint
-func (h *Handlers) GetRoot(c *gin.Context) {
-	c.String(http.StatusOK, "API server is running")
-}
-
-// GetTest handles the test endpoint
-func (h *Handlers) GetTest(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{
-		"message":   "API is working!",
-		"timestamp": time.Now().Format(time.RFC3339),
-	})
-}
-
-// GetJobsTest handles the jobs test endpoint
-func (h *Handlers) GetJobsTest(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{
-		"message":   "Jobs API is working!",
-		"timestamp": time.Now().Format(time.RFC3339),
-	})
 }
 
 // CreateRandomTextJob handles the random text job creation endpoint
