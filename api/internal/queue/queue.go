@@ -12,6 +12,15 @@ import (
 	"github.com/google/uuid"
 )
 
+// JobQueueInterface defines the interface for job queue operations
+type JobQueueInterface interface {
+	AddJob(jobType string, data interface{}) (string, error)
+	GetJob(ctx context.Context, jobID string) (*models.Job, error)
+	GetJobResult(ctx context.Context, jobID string) (*models.JobResult, error)
+	GetRedisClient() *redis.Client
+	StartProcessing(ctx context.Context, jobType string, handler JobHandler)
+}
+
 // JobQueue handles job queue operations
 type JobQueue struct {
 	redisClient *redis.Client

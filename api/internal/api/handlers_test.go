@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -30,7 +31,7 @@ func setupTestServer(t *testing.T) (*webhook.MockRepository, *gin.Engine) {
 	os.Setenv("GO_ENV", "test")
 	os.Setenv("TEST_WEBHOOK_SECRET", "test-secret-for-testing")
 
-	jobQueue := queue.NewJobQueue("localhost:6379")
+	jobQueue := &queue.MockJobQueue{}
 	repository := webhook.NewMockRepository()
 	webhookService := webhook.NewService(repository)
 	wsServer := websocket.NewServer(jobQueue)
@@ -47,6 +48,7 @@ func TestReceiveWebhook(t *testing.T) {
 		signature      string
 		expectedStatus int
 		expectedValid  bool
+		expectJobQueue bool
 	}{
 		{
 			name:   "Valid webhook",
@@ -58,6 +60,7 @@ func TestReceiveWebhook(t *testing.T) {
 			signature:      "", // Will be generated
 			expectedStatus: http.StatusOK,
 			expectedValid:  true,
+			expectJobQueue: true,
 		},
 		{
 			name:   "Invalid signature",
@@ -69,6 +72,7 @@ func TestReceiveWebhook(t *testing.T) {
 			signature:      "invalid-signature",
 			expectedStatus: http.StatusUnauthorized,
 			expectedValid:  false,
+			expectJobQueue: false,
 		},
 		{
 			name:   "Missing signature",
@@ -80,6 +84,7 @@ func TestReceiveWebhook(t *testing.T) {
 			signature:      "",
 			expectedStatus: http.StatusBadRequest,
 			expectedValid:  false,
+			expectJobQueue: false,
 		},
 		{
 			name:   "Unknown source",
@@ -91,6 +96,7 @@ func TestReceiveWebhook(t *testing.T) {
 			signature:      "", // Will be generated
 			expectedStatus: http.StatusBadRequest,
 			expectedValid:  false,
+			expectJobQueue: false,
 		},
 	}
 
@@ -130,9 +136,69 @@ func TestReceiveWebhook(t *testing.T) {
 				assert.NoError(t, err)
 				assert.Equal(t, tc.source, stored.Source)
 				assert.Equal(t, tc.payload["event"], stored.Event)
+
+				// Verify job queueing
+				if tc.expectJobQueue {
+					assert.NotEmpty(t, response.JobID, "Expected a job ID for valid webhook")
+					assert.Empty(t, response.Warning, "Expected no warning for successful job queueing")
+				} else {
+					assert.Empty(t, response.JobID, "Expected no job ID for invalid webhook")
+				}
 			}
 		})
 	}
+}
+
+// TestReceiveWebhookJobQueueFailure tests the behavior when job queueing fails
+func TestReceiveWebhookJobQueueFailure(t *testing.T) {
+	// Create a mock job queue that always fails
+	failingJobQueue := &queue.MockJobQueue{
+		AddJobFunc: func(jobType string, data interface{}) (string, error) {
+			return "", fmt.Errorf("simulated job queue failure")
+		},
+	}
+
+	// Set up the test server with the failing job queue
+	repository := webhook.NewMockRepository()
+	webhookService := webhook.NewService(repository)
+	wsServer := websocket.NewServer(failingJobQueue)
+	handlers := NewHandlers(failingJobQueue, webhookService)
+	router := SetupRouter(handlers, wsServer)
+
+	// Create a valid webhook request
+	payload := map[string]interface{}{
+		"event": "test-event",
+		"data":  "test-data",
+	}
+	payloadBytes, _ := json.Marshal(payload)
+	factory := webhook.NewFactory()
+	signature := factory.GenerateSignature("test", payloadBytes)
+
+	// Send the request
+	req, _ := http.NewRequest("POST", "/api/webhooks/test", bytes.NewBuffer(payloadBytes))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Webhook-Signature", signature)
+
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	// Verify response
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var response models.WebhookResponse
+	err := json.Unmarshal(w.Body.Bytes(), &response)
+	assert.NoError(t, err)
+	assert.NotEmpty(t, response.ID)
+	assert.True(t, response.Verified)
+	assert.Empty(t, response.JobID)
+	assert.NotEmpty(t, response.Warning)
+	assert.Contains(t, response.Warning, "processing job could not be queued")
+
+	// Verify webhook was still stored
+	stored, err := repository.GetByID(repository.Context(), response.ID)
+	assert.NoError(t, err)
+	assert.Equal(t, "test", stored.Source)
+	assert.Equal(t, "test-event", stored.Event)
 }
 
 func TestGetWebhook(t *testing.T) {

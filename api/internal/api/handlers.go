@@ -13,12 +13,12 @@ import (
 
 // Handlers contains the API handlers
 type Handlers struct {
-	jobQueue       *queue.JobQueue
+	jobQueue       queue.JobQueueInterface
 	webhookService *webhook.Service
 }
 
 // NewHandlers creates a new Handlers instance
-func NewHandlers(jobQueue *queue.JobQueue, webhookService *webhook.Service) *Handlers {
+func NewHandlers(jobQueue queue.JobQueueInterface, webhookService *webhook.Service) *Handlers {
 	return &Handlers{
 		jobQueue:       jobQueue,
 		webhookService: webhookService,
