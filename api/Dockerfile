@@ -1,5 +1,8 @@
 FROM golang:1.24-alpine
 
+# Install curl for healthcheck
+RUN apk add --no-cache curl
+
 # Set up the workspace
 WORKDIR /workspace
 

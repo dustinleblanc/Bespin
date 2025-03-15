@@ -3,8 +3,8 @@ version: '3.8'
 services:
   api:
     build:
-      context: ./api
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: ./api/Dockerfile
     ports:
       - "3002:3002"
     environment:
@@ -18,8 +18,35 @@ services:
       - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET}
       - SENDGRID_WEBHOOK_SECRET=${SENDGRID_WEBHOOK_SECRET}
     depends_on:
-      - postgres
-      - redis
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - bespin-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3002/api/"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  worker:
+    build:
+      context: ./worker
+      dockerfile: Dockerfile
+    environment:
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_USER=postgres
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_NAME=bespin
+      - REDIS_ADDR=redis:6379
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     networks:
       - bespin-network
 
@@ -35,7 +62,8 @@ services:
       - PORT=8000
       - NUXT_PUBLIC_API_URL=http://localhost:3002
     depends_on:
-      - api
+      api:
+        condition: service_healthy
     networks:
       - bespin-network
 
