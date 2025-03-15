@@ -199,7 +199,7 @@ jobs:
       - name: Build and test Worker Docker image
         uses: docker/build-push-action@v4
         with:
-          context: .
+          context: ./worker
           file: ./worker/Dockerfile
           push: false
           tags: bespin-worker:latest
