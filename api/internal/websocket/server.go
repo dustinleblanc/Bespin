@@ -2,78 +2,101 @@ package websocket
 
 import (
 	"context"
+	"encoding/json"
 	"log"
 	"net/http"
+	"sync"
 
-	"github.com/dustinleblanc/go-bespin/internal/queue"
 	"github.com/gorilla/websocket"
 )
 
-// Server handles WebSocket connections
+// Server represents a WebSocket server
 type Server struct {
-	jobQueue   queue.JobQueueInterface
 	clients    map[*Client]bool
 	register   chan *Client
 	unregister chan *Client
 	broadcast  chan []byte
-	logger     *log.Logger
 	upgrader   websocket.Upgrader
+	logger     *log.Logger
+	mu         sync.Mutex
+	ctx        context.Context
+	cancel     context.CancelFunc
+	// Track clients by job ID
+	jobClients map[string][]*Client
 }
 
 // Client represents a WebSocket client
 type Client struct {
-	server *Server
 	conn   *websocket.Conn
+	server *Server
 	send   chan []byte
-	id     string
+	jobID  string
+}
+
+// JobStatus represents a job status update
+type JobStatus struct {
+	Type   string      `json:"type"`
+	JobID  string      `json:"job_id"`
+	Status string      `json:"status"`
+	Result interface{} `json:"result,omitempty"`
 }
 
 // NewServer creates a new WebSocket server
-func NewServer(jobQueue queue.JobQueueInterface) *Server {
+func NewServer() *Server {
+	ctx, cancel := context.WithCancel(context.Background())
 	return &Server{
-		jobQueue:   jobQueue,
 		clients:    make(map[*Client]bool),
 		register:   make(chan *Client),
 		unregister: make(chan *Client),
 		broadcast:  make(chan []byte),
-		logger:     log.New(log.Writer(), "[WebSocket] ", log.LstdFlags),
 		upgrader: websocket.Upgrader{
-			ReadBufferSize:  1024,
-			WriteBufferSize: 1024,
 			CheckOrigin: func(r *http.Request) bool {
-				return true // Allow all origins for now
+				return true // Allow all origins
 			},
 		},
+		logger:     log.New(log.Writer(), "[WebSocket] ", log.LstdFlags),
+		ctx:        ctx,
+		cancel:     cancel,
+		jobClients: make(map[string][]*Client),
 	}
 }
 
 // Start starts the WebSocket server
-func (s *Server) Start(ctx context.Context) {
+func (s *Server) Start() {
 	s.logger.Println("Starting WebSocket server")
-
-	// Start the client manager
-	go s.run()
-
-	// Start listening for Redis messages
-	go s.listenForJobCompletions(ctx)
-}
-
-// run runs the client manager
-func (s *Server) run() {
 	for {
 		select {
+		case <-s.ctx.Done():
+			return
 		case client := <-s.register:
+			s.mu.Lock()
 			s.clients[client] = true
-			s.logger.Printf("Client connected: %s", client.id)
-			s.logger.Printf("Total connected clients: %d", len(s.clients))
+			// Add client to job subscribers
+			s.jobClients[client.jobID] = append(s.jobClients[client.jobID], client)
+			s.mu.Unlock()
+			s.logger.Printf("Client connected: %p, Job ID: %s", client, client.jobID)
 		case client := <-s.unregister:
+			s.mu.Lock()
 			if _, ok := s.clients[client]; ok {
 				delete(s.clients, client)
 				close(client.send)
-				s.logger.Printf("Client disconnected: %s", client.id)
-				s.logger.Printf("Remaining connected clients: %d", len(s.clients))
+				// Remove client from job subscribers
+				if clients, ok := s.jobClients[client.jobID]; ok {
+					for i, c := range clients {
+						if c == client {
+							s.jobClients[client.jobID] = append(clients[:i], clients[i+1:]...)
+							break
+						}
+					}
+					if len(s.jobClients[client.jobID]) == 0 {
+						delete(s.jobClients, client.jobID)
+					}
+				}
 			}
+			s.mu.Unlock()
+			s.logger.Printf("Client disconnected: %p", client)
 		case message := <-s.broadcast:
+			s.mu.Lock()
 			for client := range s.clients {
 				select {
 				case client.send <- message:
@@ -82,28 +105,63 @@ func (s *Server) run() {
 					delete(s.clients, client)
 				}
 			}
+			s.mu.Unlock()
 		}
 	}
 }
 
-// listenForJobCompletions listens for job completion events from Redis
-func (s *Server) listenForJobCompletions(ctx context.Context) {
-	pubsub := s.jobQueue.GetRedisClient().PSubscribe(ctx, "job-completed:*")
-	defer pubsub.Close()
+// Stop stops the WebSocket server
+func (s *Server) Stop() {
+	s.logger.Println("Stopping WebSocket server")
+	s.cancel()
+}
 
-	ch := pubsub.Channel()
+// HandleConnection handles a new WebSocket connection
+func (s *Server) HandleConnection(w http.ResponseWriter, r *http.Request, jobID string) {
+	conn, err := s.upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		s.logger.Printf("Failed to upgrade connection: %v", err)
+		return
+	}
 
-	for msg := range ch {
-		s.logger.Printf("Received message: %s", msg.Channel)
+	client := &Client{
+		conn:   conn,
+		server: s,
+		send:   make(chan []byte, 256),
+		jobID:  jobID,
+	}
 
-		// Extract job ID from channel name (not used directly but logged for debugging)
-		// jobID := msg.Channel[len("job-completed:"):]
+	s.register <- client
 
-		// Broadcast to all clients
-		for client := range s.clients {
+	go client.writePump()
+	go client.readPump()
+}
+
+// NotifyJobStatus notifies clients about job status changes
+func (s *Server) NotifyJobStatus(jobID string, status string, result interface{}) {
+	s.logger.Printf("Notifying job status: %s, Status: %s", jobID, status)
+
+	message := JobStatus{
+		Type:   "job_status",
+		JobID:  jobID,
+		Status: status,
+		Result: result,
+	}
+
+	data, err := json.Marshal(message)
+	if err != nil {
+		s.logger.Printf("Failed to marshal job status message: %v", err)
+		return
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Send to clients subscribed to this job
+	if clients, ok := s.jobClients[jobID]; ok {
+		for _, client := range clients {
 			select {
-			case client.send <- []byte(msg.Payload):
-				s.logger.Printf("Sent job completion event to client: %s", client.id)
+			case client.send <- data:
 			default:
 				close(client.send)
 				delete(s.clients, client)
@@ -112,26 +170,25 @@ func (s *Server) listenForJobCompletions(ctx context.Context) {
 	}
 }
 
-// ServeWs handles WebSocket requests from clients
-func (s *Server) ServeWs(w http.ResponseWriter, r *http.Request) {
-	conn, err := s.upgrader.Upgrade(w, r, nil)
-	if err != nil {
-		s.logger.Printf("Error upgrading connection: %v", err)
-		return
+// readPump pumps messages from the WebSocket connection to the hub
+func (c *Client) readPump() {
+	defer func() {
+		c.server.unregister <- c
+		c.conn.Close()
+	}()
+
+	for {
+		_, message, err := c.conn.ReadMessage()
+		if err != nil {
+			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
+				c.server.logger.Printf("Error reading message: %v", err)
+			}
+			break
+		}
+
+		// Handle incoming messages if needed
+		c.server.logger.Printf("Received message from client: %s", message)
 	}
-
-	client := &Client{
-		server: s,
-		conn:   conn,
-		send:   make(chan []byte, 256),
-		id:     r.RemoteAddr,
-	}
-
-	s.register <- client
-
-	// Start goroutines for reading and writing
-	go client.writePump()
-	go client.readPump()
 }
 
 // writePump pumps messages from the hub to the WebSocket connection
@@ -155,34 +212,9 @@ func (c *Client) writePump() {
 			}
 			w.Write(message)
 
-			// Add queued messages
-			n := len(c.send)
-			for i := 0; i < n; i++ {
-				w.Write([]byte{'\n'})
-				w.Write(<-c.send)
-			}
-
 			if err := w.Close(); err != nil {
 				return
 			}
-		}
-	}
-}
-
-// readPump pumps messages from the WebSocket connection to the hub
-func (c *Client) readPump() {
-	defer func() {
-		c.server.unregister <- c
-		c.conn.Close()
-	}()
-
-	for {
-		_, _, err := c.conn.ReadMessage()
-		if err != nil {
-			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-				c.server.logger.Printf("Error reading message: %v", err)
-			}
-			break
 		}
 	}
 }

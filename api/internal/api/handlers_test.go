@@ -10,14 +10,18 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
+	"time"
 
-	"github.com/dustinleblanc/go-bespin/internal/queue"
-	"github.com/dustinleblanc/go-bespin/internal/webhook"
-	"github.com/dustinleblanc/go-bespin/internal/websocket"
-	"github.com/dustinleblanc/go-bespin/pkg/models"
+	"github.com/dustinleblanc/go-bespin-api/internal/queue"
+	"github.com/dustinleblanc/go-bespin-api/internal/webhook"
+	internalws "github.com/dustinleblanc/go-bespin-api/internal/websocket"
+	"github.com/dustinleblanc/go-bespin-api/pkg/models"
 	"github.com/gin-gonic/gin"
+	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 )
 
 func init() {
@@ -26,306 +30,333 @@ func init() {
 	os.Setenv("GITHUB_WEBHOOK_SECRET", "test-secret-for-testing")
 }
 
-func setupTestServer(t *testing.T) (*webhook.MockRepository, *gin.Engine) {
-	// Set up test environment for each test
-	os.Setenv("GO_ENV", "test")
-	os.Setenv("GITHUB_WEBHOOK_SECRET", "test-secret-for-testing")
+func TestHandleRandomText(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	mockQueue := &queue.MockQueue{}
+	mockRepo := webhook.NewMockRepository()
+	webhookService := webhook.NewService(mockRepo)
+	handlers := NewHandlers(mockQueue, webhookService)
 
-	jobQueue := &queue.MockJobQueue{}
-	repository := webhook.NewMockRepository()
-	webhookService := webhook.NewService(repository)
-	wsServer := websocket.NewServer(jobQueue)
-	handlers := NewHandlers(jobQueue, webhookService)
-	router := SetupRouter(handlers, wsServer)
-	return repository, router
+	router := gin.New()
+	router.GET("/random-text", handlers.HandleRandomText)
+
+	tests := []struct {
+		name       string
+		length     string
+		wantStatus int
+	}{
+		{
+			name:       "valid request",
+			length:     "10",
+			wantStatus: http.StatusAccepted,
+		},
+		{
+			name:       "invalid length - not a number",
+			length:     "invalid",
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:       "no length parameter",
+			length:     "",
+			wantStatus: http.StatusAccepted, // Uses default value
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Set up mock expectations
+			if tt.wantStatus == http.StatusAccepted {
+				mockQueue.On("AddJob", mock.Anything, mock.MatchedBy(func(job *models.Job) bool {
+					return job.Type == models.JobTypeRandomText
+				})).Return("test-job-id", nil).Once()
+			}
+
+			// Create request
+			url := "/random-text"
+			if tt.length != "" {
+				url += "?length=" + tt.length
+			}
+			req := httptest.NewRequest(http.MethodGet, url, nil)
+
+			// Create response recorder
+			w := httptest.NewRecorder()
+
+			// Serve request
+			router.ServeHTTP(w, req)
+
+			// Assert response
+			assert.Equal(t, tt.wantStatus, w.Code)
+
+			// Verify mock expectations
+			mockQueue.AssertExpectations(t)
+		})
+	}
 }
 
-func TestReceiveWebhook(t *testing.T) {
+func TestHandleWebhook(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	mockService := webhook.NewMockService()
+
 	testCases := []struct {
 		name           string
 		source         string
+		event          string
 		payload        map[string]interface{}
-		signature      string
-		expectedStatus int
-		expectedValid  bool
+		wantStatus     int
 		expectJobQueue bool
+		setupMocks     func(*webhook.MockService, *queue.MockQueue, map[string]interface{})
 	}{
 		{
-			name:   "Valid webhook",
+			name:   "valid request",
 			source: "github",
+			event:  "push",
 			payload: map[string]interface{}{
-				"event": "test-event",
-				"data":  "test-data",
+				"test": "data",
 			},
-			signature:      "", // Will be generated
-			expectedStatus: http.StatusOK,
-			expectedValid:  true,
+			wantStatus:     http.StatusAccepted,
 			expectJobQueue: true,
+			setupMocks: func(s *webhook.MockService, q *queue.MockQueue, payload map[string]interface{}) {
+				payloadBytes, _ := json.Marshal(payload)
+				signature := generateSignature(payloadBytes)
+
+				s.On("CreateReceipt", mock.Anything, "github", "push", payloadBytes, signature).Return(&models.WebhookReceipt{
+					ID:        "test-receipt-id",
+					Source:    "github",
+					Event:     "push",
+					Payload:   payloadBytes,
+					Signature: signature,
+				}, nil).Once()
+
+				q.On("AddJob", mock.Anything, mock.MatchedBy(func(job *models.Job) bool {
+					return job.Type == models.JobTypeProcessWebhook && job.Data.(models.WebhookJobData).ReceiptID == "test-receipt-id"
+				})).Return("test-job-id", nil).Once()
+			},
 		},
 		{
-			name:   "Invalid signature",
+			name:       "missing source",
+			source:     "",
+			event:      "push",
+			payload:    map[string]interface{}{},
+			wantStatus: http.StatusNotFound,
+			setupMocks: func(s *webhook.MockService, q *queue.MockQueue, payload map[string]interface{}) {},
+		},
+		{
+			name:       "missing event",
+			source:     "github",
+			event:      "",
+			payload:    map[string]interface{}{},
+			wantStatus: http.StatusBadRequest,
+			setupMocks: func(s *webhook.MockService, q *queue.MockQueue, payload map[string]interface{}) {},
+		},
+		{
+			name:       "missing signature",
+			source:     "github",
+			event:      "push",
+			payload:    map[string]interface{}{},
+			wantStatus: http.StatusBadRequest,
+			setupMocks: func(s *webhook.MockService, q *queue.MockQueue, payload map[string]interface{}) {},
+		},
+		{
+			name:   "invalid signature",
 			source: "github",
+			event:  "push",
 			payload: map[string]interface{}{
-				"event": "test-event",
-				"data":  "test-data",
+				"test": "data",
 			},
-			signature:      "invalid-signature",
-			expectedStatus: http.StatusUnauthorized,
-			expectedValid:  false,
-			expectJobQueue: false,
+			wantStatus: http.StatusBadRequest,
+			setupMocks: func(s *webhook.MockService, q *queue.MockQueue, payload map[string]interface{}) {
+				payloadBytes, _ := json.Marshal(payload)
+				signature := generateSignature(payloadBytes)
+				s.On("CreateReceipt", mock.Anything, "github", "push", payloadBytes, signature).Return(nil, fmt.Errorf("invalid signature")).Once()
+			},
 		},
 		{
-			name:   "Missing signature",
-			source: "github",
+			name:   "invalid source",
+			source: "invalid",
+			event:  "push",
 			payload: map[string]interface{}{
-				"event": "test-event",
-				"data":  "test-data",
+				"test": "data",
 			},
-			signature:      "",
-			expectedStatus: http.StatusBadRequest,
-			expectedValid:  false,
-			expectJobQueue: false,
-		},
-		{
-			name:   "Unknown source",
-			source: "unknown",
-			payload: map[string]interface{}{
-				"event": "test-event",
-				"data":  "test-data",
+			wantStatus: http.StatusNotFound,
+			setupMocks: func(s *webhook.MockService, q *queue.MockQueue, payload map[string]interface{}) {
+				payloadBytes, _ := json.Marshal(payload)
+				signature := generateSignature(payloadBytes)
+				s.On("CreateReceipt", mock.Anything, "invalid", "push", payloadBytes, signature).Return(nil, fmt.Errorf("invalid source: invalid")).Once()
 			},
-			signature:      "", // Will be generated
-			expectedStatus: http.StatusBadRequest,
-			expectedValid:  false,
-			expectJobQueue: false,
 		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			repository, router := setupTestServer(t)
-			factory := webhook.NewFactory()
+			// Create a new router and queue for each test case
+			mockQueue := &queue.MockQueue{}
+			handlers := NewHandlers(mockQueue, mockService)
+			router := gin.New()
+			router.POST("/api/webhooks/:source", handlers.HandleWebhook)
 
+			// Setup mock expectations
+			tc.setupMocks(mockService, mockQueue, tc.payload)
+
+			// Create request
 			payloadBytes, _ := json.Marshal(tc.payload)
-
-			// Generate signature if needed for the test case
-			signature := tc.signature
-			if signature == "" && tc.name != "Missing signature" {
-				signature = factory.GenerateSignature(tc.source, payloadBytes)
-			}
-
-			req, _ := http.NewRequest("POST", "/api/webhooks/"+tc.source, bytes.NewBuffer(payloadBytes))
+			req := httptest.NewRequest(http.MethodPost, "/api/webhooks/"+tc.source, bytes.NewBuffer(payloadBytes))
 			req.Header.Set("Content-Type", "application/json")
-			if signature != "" {
-				req.Header.Set("X-Webhook-Signature", signature)
+			req.Header.Set("X-Event-Type", tc.event)
+
+			// Generate signature for valid requests
+			if tc.name == "valid request" || tc.name == "invalid source" || tc.name == "invalid signature" {
+				signature := generateSignature(payloadBytes)
+				req.Header.Set("X-Signature", signature)
 			}
 
+			// Create response recorder
 			w := httptest.NewRecorder()
+
+			// Serve request
 			router.ServeHTTP(w, req)
 
-			assert.Equal(t, tc.expectedStatus, w.Code)
+			// Assert response
+			assert.Equal(t, tc.wantStatus, w.Code)
 
-			if tc.expectedStatus == http.StatusOK {
-				var response models.WebhookResponse
-				err := json.Unmarshal(w.Body.Bytes(), &response)
-				assert.NoError(t, err)
-				assert.NotEmpty(t, response.ID)
-				assert.Equal(t, tc.expectedValid, response.Verified)
-
-				// Verify storage
-				stored, err := repository.GetByID(repository.Context(), response.ID)
-				assert.NoError(t, err)
-				assert.Equal(t, tc.source, stored.Source)
-				assert.Equal(t, tc.payload["event"], stored.Event)
-
-				// Verify job queueing
-				if tc.expectJobQueue {
-					assert.NotEmpty(t, response.JobID, "Expected a job ID for valid webhook")
-					assert.Empty(t, response.Warning, "Expected no warning for successful job queueing")
-				} else {
-					assert.Empty(t, response.JobID, "Expected no job ID for invalid webhook")
-				}
-			}
+			// Verify mock expectations
+			mockQueue.AssertExpectations(t)
+			mockService.AssertExpectations(t)
 		})
 	}
 }
 
-// TestReceiveWebhookJobQueueFailure tests the behavior when job queueing fails
-func TestReceiveWebhookJobQueueFailure(t *testing.T) {
-	// Create a mock job queue that always fails
-	failingJobQueue := &queue.MockJobQueue{
-		AddJobFunc: func(jobType string, data interface{}) (string, error) {
-			return "", fmt.Errorf("simulated job queue failure")
-		},
-	}
+func TestHandleGetJobResult(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	mockQueue := &queue.MockQueue{}
+	mockRepo := webhook.NewMockRepository()
+	webhookService := webhook.NewService(mockRepo)
+	handlers := NewHandlers(mockQueue, webhookService)
 
-	// Set up the test server with the failing job queue
-	repository := webhook.NewMockRepository()
-	webhookService := webhook.NewService(repository)
-	wsServer := websocket.NewServer(failingJobQueue)
-	handlers := NewHandlers(failingJobQueue, webhookService)
-	router := SetupRouter(handlers, wsServer)
+	router := gin.New()
+	router.GET("/jobs/:id", handlers.HandleGetJobResult)
 
-	// Create a valid webhook request
-	payload := map[string]interface{}{
-		"event": "test-event",
-		"data":  "test-data",
-	}
-	payloadBytes, _ := json.Marshal(payload)
-	factory := webhook.NewFactory()
-	signature := factory.GenerateSignature("github", payloadBytes)
-
-	// Send the request
-	req, _ := http.NewRequest("POST", "/api/webhooks/github", bytes.NewBuffer(payloadBytes))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Webhook-Signature", signature)
-
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
-	// Verify response
-	assert.Equal(t, http.StatusOK, w.Code)
-
-	var response models.WebhookResponse
-	err := json.Unmarshal(w.Body.Bytes(), &response)
-	assert.NoError(t, err)
-	assert.NotEmpty(t, response.ID)
-	assert.True(t, response.Verified)
-	assert.Empty(t, response.JobID)
-	assert.NotEmpty(t, response.Warning)
-	assert.Contains(t, response.Warning, "processing job could not be queued")
-
-	// Verify webhook was still stored
-	stored, err := repository.GetByID(repository.Context(), response.ID)
-	assert.NoError(t, err)
-	assert.Equal(t, "github", stored.Source)
-	assert.Equal(t, "test-event", stored.Event)
-}
-
-func TestGetWebhook(t *testing.T) {
-	testCases := []struct {
-		name           string
-		setupWebhook   bool
-		expectedStatus int
+	tests := []struct {
+		name       string
+		jobID      string
+		result     *models.JobResult
+		err        error
+		wantStatus int
 	}{
 		{
-			name:           "Existing webhook",
-			setupWebhook:   true,
-			expectedStatus: http.StatusOK,
+			name:  "existing job",
+			jobID: "test-job-id",
+			result: &models.JobResult{
+				ID:     "test-job-id",
+				Status: models.JobStatusCompleted,
+				Result: "test result",
+			},
+			wantStatus: http.StatusOK,
 		},
 		{
-			name:           "Non-existent webhook",
-			setupWebhook:   false,
-			expectedStatus: http.StatusNotFound,
+			name:       "non-existent job",
+			jobID:      "non-existent",
+			result:     nil,
+			wantStatus: http.StatusNotFound,
 		},
 	}
 
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			repository, router := setupTestServer(t)
-			factory := webhook.NewFactory()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Set up mock expectations
+			mockQueue.On("GetJobResult", mock.Anything, tt.jobID).Return(tt.result, tt.err).Once()
 
-			var webhookID string
-			if tc.setupWebhook {
-				receipt := factory.CreateWebhookReceipt(
-					"github",
-					"test-event",
-					map[string]interface{}{"data": "test"},
-				)
-				err := repository.Store(repository.Context(), receipt)
-				assert.NoError(t, err)
-				webhookID = receipt.ID
-			} else {
-				webhookID = "non-existent-id"
-			}
+			// Create request
+			req := httptest.NewRequest(http.MethodGet, "/jobs/"+tt.jobID, nil)
 
-			req, _ := http.NewRequest("GET", "/api/webhooks/"+webhookID, nil)
+			// Create response recorder
 			w := httptest.NewRecorder()
+
+			// Serve request
 			router.ServeHTTP(w, req)
 
-			assert.Equal(t, tc.expectedStatus, w.Code)
+			// Assert response
+			assert.Equal(t, tt.wantStatus, w.Code)
 
-			if tc.expectedStatus == http.StatusOK {
-				var retrievedReceipt models.WebhookReceipt
-				err := json.Unmarshal(w.Body.Bytes(), &retrievedReceipt)
-				assert.NoError(t, err)
-				assert.Equal(t, webhookID, retrievedReceipt.ID)
-			}
+			// Verify mock expectations
+			mockQueue.AssertExpectations(t)
 		})
 	}
 }
 
-func TestListWebhooks(t *testing.T) {
-	testCases := []struct {
-		name           string
-		source         string
-		webhookCount   int
-		expectedCount  int
-		expectedStatus int
+func TestHandleWebSocket(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	mockQueue := &queue.MockQueue{}
+	mockRepo := webhook.NewMockRepository()
+	webhookService := webhook.NewService(mockRepo)
+	handlers := NewHandlers(mockQueue, webhookService)
+
+	// Start the WebSocket server
+	go handlers.wsServer.Start()
+	defer handlers.wsServer.Stop()
+
+	router := gin.New()
+	router.GET("/ws", handlers.HandleWebSocket)
+
+	// Create a test server
+	server := httptest.NewServer(router)
+	defer server.Close()
+
+	// Convert http URL to ws URL
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/ws?job_id=test-job-id"
+
+	// Connect to WebSocket
+	ws, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("Failed to connect to WebSocket: %v", err)
+	}
+	defer ws.Close()
+
+	// Create a channel to receive WebSocket messages
+	messages := make(chan internalws.JobStatus)
+	go func() {
+		for {
+			var message internalws.JobStatus
+			err := ws.ReadJSON(&message)
+			if err != nil {
+				close(messages)
+				return
+			}
+			messages <- message
+		}
+	}()
+
+	// Test job status updates
+	statusUpdates := []struct {
+		status string
+		result interface{}
 	}{
-		{
-			name:           "List all webhooks",
-			source:         "",
-			webhookCount:   3,
-			expectedCount:  3,
-			expectedStatus: http.StatusOK,
-		},
-		{
-			name:           "List source webhooks",
-			source:         "github",
-			webhookCount:   3,
-			expectedCount:  3,
-			expectedStatus: http.StatusOK,
-		},
-		{
-			name:           "Empty source",
-			source:         "empty",
-			webhookCount:   0,
-			expectedCount:  0,
-			expectedStatus: http.StatusOK,
-		},
+		{status: "pending", result: nil},
+		{status: "running", result: nil},
+		{status: "completed", result: "test result"},
 	}
 
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			repository, router := setupTestServer(t)
-			factory := webhook.NewFactory()
+	for _, update := range statusUpdates {
+		// Send status update
+		handlers.NotifyJobStatus("test-job-id", update.status, update.result)
 
-			// Create test webhooks
-			for i := 0; i < tc.webhookCount; i++ {
-				receipt := factory.CreateWebhookReceipt(
-					"github",
-					"test-event",
-					map[string]interface{}{"data": "test"},
-				)
-				err := repository.Store(repository.Context(), receipt)
-				assert.NoError(t, err)
+		// Wait for message
+		select {
+		case msg := <-messages:
+			assert.Equal(t, "job_status", msg.Type)
+			assert.Equal(t, "test-job-id", msg.JobID)
+			assert.Equal(t, update.status, msg.Status)
+			if update.result != nil {
+				assert.Equal(t, update.result, msg.Result)
 			}
-
-			url := "/api/webhooks"
-			if tc.source != "" {
-				url += "?source=" + tc.source
-			}
-
-			req, _ := http.NewRequest("GET", url, nil)
-			w := httptest.NewRecorder()
-			router.ServeHTTP(w, req)
-
-			assert.Equal(t, tc.expectedStatus, w.Code)
-
-			var response struct {
-				Webhooks []*models.WebhookReceipt `json:"webhooks"`
-				Count    int                      `json:"count"`
-			}
-			err := json.Unmarshal(w.Body.Bytes(), &response)
-			assert.NoError(t, err)
-			assert.Equal(t, tc.expectedCount, response.Count)
-			assert.Equal(t, tc.expectedCount, len(response.Webhooks))
-		})
+		case <-time.After(time.Second):
+			t.Fatalf("Timeout waiting for status update: %s", update.status)
+		}
 	}
 }
 
 // Helper function to generate a signature
-func generateSignature(payload []byte, secret string) string {
+func generateSignature(payload []byte) string {
+	secret := os.Getenv("GITHUB_WEBHOOK_SECRET")
 	h := hmac.New(sha256.New, []byte(secret))
 	h.Write(payload)
 	return hex.EncodeToString(h.Sum(nil))

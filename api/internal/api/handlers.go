@@ -1,203 +1,166 @@
 package api
 
 import (
-	"bytes"
+	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 
-	"github.com/dustinleblanc/go-bespin/internal/queue"
-	"github.com/dustinleblanc/go-bespin/internal/webhook"
-	"github.com/dustinleblanc/go-bespin/pkg/models"
+	"github.com/dustinleblanc/go-bespin-api/internal/queue"
+	"github.com/dustinleblanc/go-bespin-api/internal/webhook"
+	"github.com/dustinleblanc/go-bespin-api/internal/websocket"
+	"github.com/dustinleblanc/go-bespin-api/pkg/models"
 	"github.com/gin-gonic/gin"
 )
 
-// Handlers contains the API handlers
+// Handlers contains the HTTP handlers for the API
 type Handlers struct {
-	jobQueue       queue.JobQueueInterface
-	webhookService *webhook.Service
+	jobQueue       queue.Queue
+	webhookService webhook.WebhookService
+	wsServer       *websocket.Server
 }
 
 // NewHandlers creates a new Handlers instance
-func NewHandlers(jobQueue queue.JobQueueInterface, webhookService *webhook.Service) *Handlers {
+func NewHandlers(jobQueue queue.Queue, webhookService webhook.WebhookService) *Handlers {
 	return &Handlers{
 		jobQueue:       jobQueue,
 		webhookService: webhookService,
+		wsServer:       websocket.NewServer(),
 	}
 }
 
-// CreateRandomTextJob handles creating a random text job
-func (h *Handlers) CreateRandomTextJob(c *gin.Context) {
-	var request struct {
-		Length int `json:"length"`
-	}
-
-	if err := c.ShouldBindJSON(&request); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
-		return
-	}
-
-	if request.Length <= 0 || request.Length > 1000 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Length must be between 1 and 1000"})
-		return
-	}
-
-	jobID, err := h.jobQueue.AddJob("random-text", request)
+// HandleRandomText handles requests to generate random text
+func (h *Handlers) HandleRandomText(c *gin.Context) {
+	// Get the length parameter from the query string
+	lengthStr := c.DefaultQuery("length", "100")
+	length, err := strconv.Atoi(lengthStr)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create job"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid length parameter"})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"id":   jobID,
-		"type": "random-text",
-		"data": request,
+	// Create a new job
+	job := &models.Job{
+		Type: models.JobTypeRandomText,
+		Data: models.RandomTextJobData{
+			Length: length,
+		},
+	}
+
+	// Add the job to the queue
+	jobID, err := h.jobQueue.AddJob(c.Request.Context(), job)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to add job to queue"})
+		return
+	}
+
+	c.JSON(http.StatusAccepted, gin.H{
+		"job_id": jobID,
+		"status": "queued",
 	})
 }
 
-// ReceiveWebhook handles incoming webhooks
-func (h *Handlers) ReceiveWebhook(c *gin.Context) {
-	// Get source from URL parameter
+// HandleWebhook handles incoming webhook requests
+func (h *Handlers) HandleWebhook(c *gin.Context) {
+	// Get the source from the URL parameter
 	source := c.Param("source")
 	if source == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Source is required"})
+		c.JSON(http.StatusNotFound, gin.H{"error": "source is required"})
 		return
 	}
 
-	// Get signature from header
-	signature := c.GetHeader("X-Webhook-Signature")
+	// Get the event from the header
+	event := c.GetHeader("X-Event-Type")
+	if event == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "X-Event-Type header is required"})
+		return
+	}
+
+	// Get the signature from the header
+	signature := c.GetHeader("X-Signature")
 	if signature == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Signature header is required"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "X-Signature header is required"})
 		return
 	}
 
-	// Check if source is valid before proceeding
-	if !h.webhookService.IsValidSource(source) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Unknown webhook source"})
-		return
-	}
-
-	// Read the raw body
-	bodyBytes, err := io.ReadAll(c.Request.Body)
+	// Read the request body
+	payload, err := io.ReadAll(c.Request.Body)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read request body"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read request body"})
 		return
 	}
 
-	// Restore the request body for binding
-	c.Request.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
-
-	// Parse the JSON body
-	var payload map[string]interface{}
-	if err := c.ShouldBindJSON(&payload); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid JSON payload"})
-		return
-	}
-
-	// Get event type from payload or header
-	event := ""
-	if eventVal, ok := payload["event"]; ok {
-		if eventStr, ok := eventVal.(string); ok {
-			event = eventStr
-		}
-	}
-	if event == "" {
-		event = c.GetHeader("X-Webhook-Event")
-	}
-	if event == "" {
-		event = "unknown"
-	}
-
-	// Collect headers
-	headers := make(map[string]string)
-	for k, v := range c.Request.Header {
-		if len(v) > 0 {
-			headers[k] = v[0]
-		}
-	}
-
-	// Verify signature before proceeding
-	verified := h.webhookService.VerifySignature(source, bodyBytes, signature)
-	if !verified {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid signature"})
-		return
-	}
-
-	// Create webhook receipt
-	receipt := models.NewWebhookReceipt(source, event, payload, headers, signature, verified)
-
-	// Store webhook receipt
-	if err := h.webhookService.StoreWebhook(c, receipt); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to store webhook"})
-		return
-	}
-
-	// Queue a job to process the webhook
-	jobData := models.WebhookJobData{
-		WebhookID: receipt.ID,
-		Source:    source,
-		Event:     event,
-	}
-	jobID, err := h.jobQueue.AddJob("process-webhook", jobData)
+	// Create a webhook receipt
+	receipt, err := h.webhookService.CreateReceipt(c.Request.Context(), source, event, payload, signature)
 	if err != nil {
-		// Log the error but don't fail the webhook receipt
-		// The webhook was received successfully, even if job queueing failed
-		c.JSON(http.StatusOK, models.WebhookResponse{
-			ID:        receipt.ID,
-			Verified:  receipt.Verified,
-			CreatedAt: receipt.CreatedAt,
-			Warning:   "Webhook received but processing job could not be queued",
-		})
+		if err.Error() == fmt.Sprintf("invalid source: %s", source) {
+			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	// Return response
-	c.JSON(http.StatusOK, models.WebhookResponse{
-		ID:        receipt.ID,
-		Verified:  receipt.Verified,
-		CreatedAt: receipt.CreatedAt,
-		JobID:     jobID,
+	// Create a new job
+	job := &models.Job{
+		Type: models.JobTypeProcessWebhook,
+		Data: models.WebhookJobData{
+			ReceiptID: receipt.ID,
+		},
+	}
+
+	// Add the job to the queue
+	jobID, err := h.jobQueue.AddJob(c.Request.Context(), job)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to add job to queue"})
+		return
+	}
+
+	c.JSON(http.StatusAccepted, gin.H{
+		"job_id":     jobID,
+		"receipt_id": receipt.ID,
+		"status":     "queued",
 	})
 }
 
-// GetWebhook handles retrieving a webhook receipt
-func (h *Handlers) GetWebhook(c *gin.Context) {
-	id := c.Param("id")
-	if id == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "ID is required"})
+// HandleGetJobResult handles requests to get a job result
+func (h *Handlers) HandleGetJobResult(c *gin.Context) {
+	// Get the job ID from the URL parameter
+	jobID := c.Param("id")
+	if jobID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "job ID is required"})
 		return
 	}
 
-	receipt, err := h.webhookService.GetWebhook(c, id)
+	// Get the job result
+	result, err := h.jobQueue.GetJobResult(c.Request.Context(), jobID)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to get job result: %v", err)})
 		return
 	}
 
-	c.JSON(http.StatusOK, receipt)
+	if result == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "job not found"})
+		return
+	}
+
+	c.JSON(http.StatusOK, result)
 }
 
-// ListWebhooks handles listing webhook receipts
-func (h *Handlers) ListWebhooks(c *gin.Context) {
-	source := c.Query("source")
-	limit := 10
-	offset := 0
-
-	// Get total count
-	count, err := h.webhookService.CountWebhooks(c, source)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+// HandleWebSocket handles WebSocket connections
+func (h *Handlers) HandleWebSocket(c *gin.Context) {
+	// Get the job ID from the query string
+	jobID := c.Query("job_id")
+	if jobID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "job_id is required"})
 		return
 	}
 
-	// Get webhooks
-	receipts, err := h.webhookService.ListWebhooks(c, source, limit, offset)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
+	// Let the WebSocket server handle the connection
+	h.wsServer.HandleConnection(c.Writer, c.Request, jobID)
+}
 
-	c.JSON(http.StatusOK, gin.H{
-		"webhooks": receipts,
-		"count":    count,
-	})
+// NotifyJobStatus notifies clients about job status changes
+func (h *Handlers) NotifyJobStatus(jobID string, status string, result interface{}) {
+	h.wsServer.NotifyJobStatus(jobID, status, result)
 }
