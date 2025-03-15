@@ -91,6 +91,12 @@ func (h *Handlers) ReceiveWebhook(c *gin.Context) {
 		return
 	}
 
+	// Check if source is valid before proceeding
+	if !h.webhookService.IsValidSource(source) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Unknown webhook source"})
+		return
+	}
+
 	// Read the raw body
 	bodyBytes, err := io.ReadAll(c.Request.Body)
 	if err != nil {
@@ -130,8 +136,12 @@ func (h *Handlers) ReceiveWebhook(c *gin.Context) {
 		}
 	}
 
-	// Verify signature
+	// Verify signature before proceeding
 	verified := h.webhookService.VerifySignature(source, bodyBytes, signature)
+	if !verified {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid signature"})
+		return
+	}
 
 	// Create webhook receipt
 	receipt := models.NewWebhookReceipt(source, event, payload, headers, signature, verified)

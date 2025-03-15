@@ -113,3 +113,9 @@ func (s *Service) CountWebhooks(ctx context.Context, source string) (int, error)
 
 	return count, nil
 }
+
+// IsValidSource checks if a webhook source is valid
+func (s *Service) IsValidSource(source string) bool {
+	_, ok := s.secrets[source]
+	return ok
+}

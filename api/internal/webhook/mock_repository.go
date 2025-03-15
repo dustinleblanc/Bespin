@@ -13,6 +13,7 @@ type MockRepository struct {
 	webhooks map[string]*models.WebhookReceipt
 	sources  map[string][]string
 	mu       sync.RWMutex
+	ctx      context.Context
 }
 
 // NewMockRepository creates a new mock repository
@@ -20,7 +21,13 @@ func NewMockRepository() *MockRepository {
 	return &MockRepository{
 		webhooks: make(map[string]*models.WebhookReceipt),
 		sources:  make(map[string][]string),
+		ctx:      context.Background(),
 	}
+}
+
+// Context returns the mock repository's context
+func (r *MockRepository) Context() context.Context {
+	return r.ctx
 }
 
 // Store stores a webhook receipt in memory

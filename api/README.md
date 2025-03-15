@@ -46,6 +46,22 @@ Database connection parameters are configured through environment variables:
 - `DB_PASSWORD` - PostgreSQL password (default: "postgres")
 - `DB_NAME` - PostgreSQL database name (default: "bespin")
 
+### Database Migrations
+
+Currently, the application uses GORM's AutoMigrate feature for database schema management. This automatically creates and updates database tables based on Go struct definitions. While this approach is convenient for development, it has some limitations:
+
+- Limited control over migration process
+- No explicit version control of schema changes
+- May not handle complex migrations well
+
+For production deployment, we plan to transition to a more robust migration system using tools like `golang-migrate` or `goose`. This will provide:
+
+- Version-controlled database schema
+- Explicit up/down migrations
+- Better handling of complex schema changes
+- SQL-first approach for precise control
+- Integration with deployment processes
+
 ### Models
 
 The main database models include:
@@ -170,6 +186,29 @@ make build
 # Run tests
 make test
 ```
+
+### Testing Philosophy
+
+Our testing strategy focuses on ensuring the reliability of our public interfaces and service boundaries while avoiding over-testing of internal implementation details. This approach:
+
+- **Tests Public Interfaces**: We prioritize testing the APIs and endpoints that other services depend on
+- **Tests Service Boundaries**: We verify the correct interaction between our service and external dependencies (databases, message queues, etc.)
+- **Avoids Internal Implementation Testing**: We deliberately avoid testing internal packages that don't directly interface with external services
+- **Uses Mocks Appropriately**: We use mock implementations for testing to avoid external dependencies and focus on behavior verification
+
+This philosophy helps us:
+- Maintain test suite efficiency
+- Reduce test maintenance burden
+- Focus coverage on critical paths
+- Allow for internal refactoring without breaking tests
+- Ensure stability of our public contracts
+
+Currently tested components:
+- API handlers (public HTTP endpoints)
+- Webhook system (external service integration)
+- WebSocket server (real-time client communication)
+
+Internal implementation details in packages like `internal/database`, `internal/queue`, and `internal/jobs` are intentionally not covered by tests as they are implementation details that may change.
 
 ### Docker
 

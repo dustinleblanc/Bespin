@@ -14,182 +14,236 @@ import (
 	"github.com/dustinleblanc/go-bespin/internal/webhook"
 	"github.com/dustinleblanc/go-bespin/internal/websocket"
 	"github.com/dustinleblanc/go-bespin/pkg/models"
-	"github.com/go-redis/redis/v8"
+	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 )
 
-func TestReceiveWebhook(t *testing.T) {
-	// Skip if Redis is not available
-	redisClient := redis.NewClient(&redis.Options{
-		Addr: "localhost:6379",
-	})
-	_, err := redisClient.Ping(redisClient.Context()).Result()
-	if err != nil {
-		t.Skip("Redis is not available")
-	}
-
-	// Create dependencies
+func setupTestServer(t *testing.T) (*webhook.MockRepository, *gin.Engine) {
 	jobQueue := queue.NewJobQueue("localhost:6379")
-	repository := webhook.NewRedisRepository(redisClient)
+	repository := webhook.NewMockRepository()
 	webhookService := webhook.NewService(repository)
 	wsServer := websocket.NewServer(jobQueue)
 	handlers := NewHandlers(jobQueue, webhookService)
 	router := SetupRouter(handlers, wsServer)
-	factory := webhook.NewFactory()
+	return repository, router
+}
 
-	// Create a test payload
-	payload := map[string]interface{}{
-		"event": "test-event",
-		"data":  "test-data",
+func TestReceiveWebhook(t *testing.T) {
+	testCases := []struct {
+		name           string
+		source         string
+		payload        map[string]interface{}
+		signature      string
+		expectedStatus int
+		expectedValid  bool
+	}{
+		{
+			name:   "Valid webhook",
+			source: "test",
+			payload: map[string]interface{}{
+				"event": "test-event",
+				"data":  "test-data",
+			},
+			signature:      "", // Will be generated
+			expectedStatus: http.StatusOK,
+			expectedValid:  true,
+		},
+		{
+			name:   "Invalid signature",
+			source: "test",
+			payload: map[string]interface{}{
+				"event": "test-event",
+				"data":  "test-data",
+			},
+			signature:      "invalid-signature",
+			expectedStatus: http.StatusUnauthorized,
+			expectedValid:  false,
+		},
+		{
+			name:   "Missing signature",
+			source: "test",
+			payload: map[string]interface{}{
+				"event": "test-event",
+				"data":  "test-data",
+			},
+			signature:      "",
+			expectedStatus: http.StatusBadRequest,
+			expectedValid:  false,
+		},
+		{
+			name:   "Unknown source",
+			source: "unknown",
+			payload: map[string]interface{}{
+				"event": "test-event",
+				"data":  "test-data",
+			},
+			signature:      "", // Will be generated
+			expectedStatus: http.StatusBadRequest,
+			expectedValid:  false,
+		},
 	}
-	payloadBytes, _ := json.Marshal(payload)
 
-	// Generate a signature
-	signature := factory.GenerateSignature("test", payloadBytes)
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			repository, router := setupTestServer(t)
+			factory := webhook.NewFactory()
 
-	// Create a test request
-	req, _ := http.NewRequest("POST", "/api/webhooks/test", bytes.NewBuffer(payloadBytes))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Webhook-Signature", signature)
+			payloadBytes, _ := json.Marshal(tc.payload)
 
-	// Create a response recorder
-	w := httptest.NewRecorder()
+			// Generate signature if needed for the test case
+			signature := tc.signature
+			if signature == "" && tc.name != "Missing signature" {
+				signature = factory.GenerateSignature(tc.source, payloadBytes)
+			}
 
-	// Perform the request
-	router.ServeHTTP(w, req)
+			req, _ := http.NewRequest("POST", "/api/webhooks/"+tc.source, bytes.NewBuffer(payloadBytes))
+			req.Header.Set("Content-Type", "application/json")
+			if signature != "" {
+				req.Header.Set("X-Webhook-Signature", signature)
+			}
 
-	// Check the response
-	assert.Equal(t, http.StatusOK, w.Code)
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
 
-	// Parse the response
-	var response models.WebhookResponse
-	err = json.Unmarshal(w.Body.Bytes(), &response)
-	assert.NoError(t, err)
-	assert.NotEmpty(t, response.ID)
-	assert.True(t, response.Verified)
+			assert.Equal(t, tc.expectedStatus, w.Code)
 
-	// Clean up
-	redisClient.Del(redisClient.Context(), "webhook:"+response.ID)
-	redisClient.LRem(redisClient.Context(), "webhooks:test", 0, response.ID)
-	redisClient.LRem(redisClient.Context(), "webhooks:all", 0, response.ID)
+			if tc.expectedStatus == http.StatusOK {
+				var response models.WebhookResponse
+				err := json.Unmarshal(w.Body.Bytes(), &response)
+				assert.NoError(t, err)
+				assert.NotEmpty(t, response.ID)
+				assert.Equal(t, tc.expectedValid, response.Verified)
+
+				// Verify storage
+				stored, err := repository.GetByID(repository.Context(), response.ID)
+				assert.NoError(t, err)
+				assert.Equal(t, tc.source, stored.Source)
+				assert.Equal(t, tc.payload["event"], stored.Event)
+			}
+		})
+	}
 }
 
 func TestGetWebhook(t *testing.T) {
-	// Skip if Redis is not available
-	redisClient := redis.NewClient(&redis.Options{
-		Addr: "localhost:6379",
-	})
-	ctx := redisClient.Context()
-	_, err := redisClient.Ping(ctx).Result()
-	if err != nil {
-		t.Skip("Redis is not available")
+	testCases := []struct {
+		name           string
+		setupWebhook   bool
+		expectedStatus int
+	}{
+		{
+			name:           "Existing webhook",
+			setupWebhook:   true,
+			expectedStatus: http.StatusOK,
+		},
+		{
+			name:           "Non-existent webhook",
+			setupWebhook:   false,
+			expectedStatus: http.StatusNotFound,
+		},
 	}
 
-	// Create dependencies
-	jobQueue := queue.NewJobQueue("localhost:6379")
-	repository := webhook.NewRedisRepository(redisClient)
-	webhookService := webhook.NewService(repository)
-	wsServer := websocket.NewServer(jobQueue)
-	handlers := NewHandlers(jobQueue, webhookService)
-	router := SetupRouter(handlers, wsServer)
-	factory := webhook.NewFactory()
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			repository, router := setupTestServer(t)
+			factory := webhook.NewFactory()
 
-	// Create and store a webhook receipt
-	receipt := factory.CreateWebhookReceipt(
-		"test",
-		"test-event",
-		map[string]interface{}{"data": "test"},
-	)
-	err = webhookService.StoreWebhook(ctx, receipt)
-	assert.NoError(t, err)
+			var webhookID string
+			if tc.setupWebhook {
+				receipt := factory.CreateWebhookReceipt(
+					"test",
+					"test-event",
+					map[string]interface{}{"data": "test"},
+				)
+				err := repository.Store(repository.Context(), receipt)
+				assert.NoError(t, err)
+				webhookID = receipt.ID
+			} else {
+				webhookID = "non-existent-id"
+			}
 
-	// Create a test request
-	req, _ := http.NewRequest("GET", "/api/webhooks/"+receipt.ID, nil)
+			req, _ := http.NewRequest("GET", "/api/webhooks/"+webhookID, nil)
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
 
-	// Create a response recorder
-	w := httptest.NewRecorder()
+			assert.Equal(t, tc.expectedStatus, w.Code)
 
-	// Perform the request
-	router.ServeHTTP(w, req)
-
-	// Check the response
-	assert.Equal(t, http.StatusOK, w.Code)
-
-	// Parse the response
-	var retrievedReceipt models.WebhookReceipt
-	err = json.Unmarshal(w.Body.Bytes(), &retrievedReceipt)
-	assert.NoError(t, err)
-	assert.Equal(t, receipt.ID, retrievedReceipt.ID)
-	assert.Equal(t, receipt.Source, retrievedReceipt.Source)
-	assert.Equal(t, receipt.Event, retrievedReceipt.Event)
-	assert.Equal(t, receipt.Signature, retrievedReceipt.Signature)
-	assert.Equal(t, receipt.Verified, retrievedReceipt.Verified)
-
-	// Clean up
-	redisClient.Del(ctx, "webhook:"+receipt.ID)
-	redisClient.LRem(ctx, "webhooks:test", 0, receipt.ID)
-	redisClient.LRem(ctx, "webhooks:all", 0, receipt.ID)
+			if tc.expectedStatus == http.StatusOK {
+				var retrievedReceipt models.WebhookReceipt
+				err := json.Unmarshal(w.Body.Bytes(), &retrievedReceipt)
+				assert.NoError(t, err)
+				assert.Equal(t, webhookID, retrievedReceipt.ID)
+			}
+		})
+	}
 }
 
 func TestListWebhooks(t *testing.T) {
-	// Skip if Redis is not available
-	redisClient := redis.NewClient(&redis.Options{
-		Addr: "localhost:6379",
-	})
-	ctx := redisClient.Context()
-	_, err := redisClient.Ping(ctx).Result()
-	if err != nil {
-		t.Skip("Redis is not available")
+	testCases := []struct {
+		name           string
+		source         string
+		webhookCount   int
+		expectedCount  int
+		expectedStatus int
+	}{
+		{
+			name:           "List all webhooks",
+			source:         "",
+			webhookCount:   3,
+			expectedCount:  3,
+			expectedStatus: http.StatusOK,
+		},
+		{
+			name:           "List source webhooks",
+			source:         "test",
+			webhookCount:   3,
+			expectedCount:  3,
+			expectedStatus: http.StatusOK,
+		},
+		{
+			name:           "Empty source",
+			source:         "empty",
+			webhookCount:   0,
+			expectedCount:  0,
+			expectedStatus: http.StatusOK,
+		},
 	}
 
-	// Create dependencies
-	jobQueue := queue.NewJobQueue("localhost:6379")
-	repository := webhook.NewRedisRepository(redisClient)
-	webhookService := webhook.NewService(repository)
-	wsServer := websocket.NewServer(jobQueue)
-	handlers := NewHandlers(jobQueue, webhookService)
-	router := SetupRouter(handlers, wsServer)
-	factory := webhook.NewFactory()
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			repository, router := setupTestServer(t)
+			factory := webhook.NewFactory()
 
-	// Create and store multiple webhook receipts
-	receipts := make([]*models.WebhookReceipt, 3)
-	for i := 0; i < 3; i++ {
-		receipt := factory.CreateWebhookReceipt(
-			"test",
-			"test-event",
-			map[string]interface{}{"data": "test"},
-		)
-		err = webhookService.StoreWebhook(ctx, receipt)
-		assert.NoError(t, err)
-		receipts[i] = receipt
-	}
+			// Create test webhooks
+			for i := 0; i < tc.webhookCount; i++ {
+				receipt := factory.CreateWebhookReceipt(
+					"test",
+					"test-event",
+					map[string]interface{}{"data": "test"},
+				)
+				err := repository.Store(repository.Context(), receipt)
+				assert.NoError(t, err)
+			}
 
-	// Create a test request
-	req, _ := http.NewRequest("GET", "/api/webhooks?source=test", nil)
+			url := "/api/webhooks"
+			if tc.source != "" {
+				url += "?source=" + tc.source
+			}
 
-	// Create a response recorder
-	w := httptest.NewRecorder()
+			req, _ := http.NewRequest("GET", url, nil)
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
 
-	// Perform the request
-	router.ServeHTTP(w, req)
+			assert.Equal(t, tc.expectedStatus, w.Code)
 
-	// Check the response
-	assert.Equal(t, http.StatusOK, w.Code)
-
-	// Parse the response
-	var response struct {
-		Webhooks []*models.WebhookReceipt `json:"webhooks"`
-		Count    int                      `json:"count"`
-	}
-	err = json.Unmarshal(w.Body.Bytes(), &response)
-	assert.NoError(t, err)
-	assert.GreaterOrEqual(t, response.Count, 3)
-
-	// Clean up
-	for _, receipt := range receipts {
-		redisClient.Del(ctx, "webhook:"+receipt.ID)
-		redisClient.LRem(ctx, "webhooks:test", 0, receipt.ID)
-		redisClient.LRem(ctx, "webhooks:all", 0, receipt.ID)
+			var response struct {
+				Webhooks []*models.WebhookReceipt `json:"webhooks"`
+				Count    int                      `json:"count"`
+			}
+			err := json.Unmarshal(w.Body.Bytes(), &response)
+			assert.NoError(t, err)
+			assert.Equal(t, tc.expectedCount, response.Count)
+			assert.Equal(t, tc.expectedCount, len(response.Webhooks))
+		})
 	}
 }
 
