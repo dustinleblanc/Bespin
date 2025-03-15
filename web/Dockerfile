@@ -7,11 +7,11 @@ RUN corepack enable
 
 WORKDIR /app
 
-# Copy package files
-COPY package.json ./
+# Copy the entire application
+COPY . .
 
 # Install dependencies
-RUN --mount=type=cache,id=pnpm,target=/pnpm/store pnpm install
+RUN pnpm install
 
-# The rest of the code will be mounted at runtime
+# Start the development server
 CMD ["pnpm", "dev"]

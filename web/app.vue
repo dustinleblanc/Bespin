@@ -167,8 +167,12 @@ async function createRandomTextJob() {
   try {
     console.log('Creating random text job with length:', textLength.value);
     jobError.value = null;
-    const response = await fetch(`${apiUrl}/api/jobs/random-text?length=${textLength.value}`, {
-      method: 'POST'
+    const response = await fetch(`${apiUrl}/api/jobs/random-text`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ length: textLength.value })
     });
     if (!response.ok) {
       const errorText = await response.text();

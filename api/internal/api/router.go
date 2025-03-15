@@ -13,7 +13,7 @@ func SetupRouter(handlers *Handlers, wsServer *websocket.Server) *gin.Engine {
 	r.Use(func(c *gin.Context) {
 		c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
 		c.Writer.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Webhook-Signature, X-Webhook-Event")
 
 		if c.Request.Method == "OPTIONS" {
 			c.AbortWithStatus(204)
@@ -38,6 +38,13 @@ func SetupRouter(handlers *Handlers, wsServer *websocket.Server) *gin.Engine {
 		{
 			jobs.GET("/test", handlers.GetJobsTest)
 			jobs.POST("/random-text", handlers.CreateRandomTextJob)
+		}
+
+		webhooks := api.Group("/webhooks")
+		{
+			webhooks.POST("/:source", handlers.ReceiveWebhook)
+			webhooks.GET("/:id", handlers.GetWebhook)
+			webhooks.GET("", handlers.ListWebhooks)
 		}
 	}
 
