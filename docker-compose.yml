@@ -1,3 +1,5 @@
+version: '3.8'
+
 services:
   api:
     build:
@@ -6,16 +8,18 @@ services:
     ports:
       - "3002:3002"
     environment:
-      - REDIS_ADDR=redis:6379
-      - PORT=3002
       - DB_HOST=postgres
       - DB_PORT=5432
       - DB_USER=postgres
-      - DB_PASSWORD=postgres
+      - DB_PASSWORD=${DB_PASSWORD}
       - DB_NAME=bespin
+      - REDIS_URL=redis://redis:6379
+      - GITHUB_WEBHOOK_SECRET=${GITHUB_WEBHOOK_SECRET}
+      - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET}
+      - SENDGRID_WEBHOOK_SECRET=${SENDGRID_WEBHOOK_SECRET}
     depends_on:
-      - redis
       - postgres
+      - redis
     networks:
       - bespin-network
 
@@ -50,15 +54,14 @@ services:
       retries: 5
 
   postgres:
-    image: postgres:15-alpine
+    image: postgres:14-alpine
     ports:
       - "5432:5432"
     environment:
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_PASSWORD=${DB_PASSWORD}
       - POSTGRES_DB=bespin
     volumes:
-      - postgres-data:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
@@ -73,4 +76,4 @@ networks:
 
 volumes:
   redis-data:
-  postgres-data:
+  postgres_data:
