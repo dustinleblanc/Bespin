@@ -39,7 +39,7 @@ func NewGormDB() (*GormDB, error) {
 
 	password := os.Getenv("DB_PASSWORD")
 	if password == "" {
-		password = "postgres"
+		return nil, fmt.Errorf("DB_PASSWORD environment variable is required")
 	}
 
 	dbname := os.Getenv("DB_NAME")
@@ -47,12 +47,18 @@ func NewGormDB() (*GormDB, error) {
 		dbname = "bespin"
 	}
 
+	// Use SSL mode from environment variable, default to disable for local development
+	sslMode := os.Getenv("DB_SSL_MODE")
+	if sslMode == "" {
+		sslMode = "disable"
+	}
+
 	// Log connection parameters
-	l.Printf("Connecting to PostgreSQL database: host=%s port=%s user=%s dbname=%s", host, port, user, dbname)
+	l.Printf("Connecting to PostgreSQL database: host=%s port=%s user=%s dbname=%s sslmode=%s", host, port, user, dbname, sslMode)
 
 	// Create DSN
-	dsn := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
-		host, port, user, password, dbname)
+	dsn := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=%s",
+		host, port, user, password, dbname, sslMode)
 
 	// Configure GORM logger
 	gormLogger := logger.New(
