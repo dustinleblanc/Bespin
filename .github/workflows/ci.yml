@@ -215,7 +215,7 @@ jobs:
           docker compose up -d
           sleep 30
           docker compose ps
-          curl -f http://localhost:3002/api/ || exit 1
+          curl -f http://localhost:3002/api/health || exit 1
           curl -f http://localhost:8000/ || exit 1
           docker compose logs
           docker compose down
