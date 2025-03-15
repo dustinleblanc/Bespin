@@ -25,34 +25,6 @@ func NewHandlers(jobQueue *queue.JobQueue, webhookService *webhook.Service) *Han
 	}
 }
 
-// CreateRandomTextJob handles the random text job creation endpoint
-func (h *Handlers) CreateRandomTextJob(c *gin.Context) {
-	var request models.RandomTextJobRequest
-
-	// Set default value
-	request.Length = 100
-
-	if err := c.ShouldBindJSON(&request); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
-	// Validate length
-	if request.Length < 1 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Length must be at least 1"})
-		return
-	}
-
-	// Create job
-	jobID, err := h.jobQueue.AddJob("random-text", request)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create job"})
-		return
-	}
-
-	c.JSON(http.StatusOK, models.JobResponse{JobID: jobID})
-}
-
 // ReceiveWebhook handles incoming webhooks
 func (h *Handlers) ReceiveWebhook(c *gin.Context) {
 	// Get source from URL parameter
@@ -130,11 +102,31 @@ func (h *Handlers) ReceiveWebhook(c *gin.Context) {
 		return
 	}
 
+	// Queue a job to process the webhook
+	jobData := models.WebhookJobData{
+		WebhookID: receipt.ID,
+		Source:    source,
+		Event:     event,
+	}
+	jobID, err := h.jobQueue.AddJob("process-webhook", jobData)
+	if err != nil {
+		// Log the error but don't fail the webhook receipt
+		// The webhook was received successfully, even if job queueing failed
+		c.JSON(http.StatusOK, models.WebhookResponse{
+			ID:        receipt.ID,
+			Verified:  receipt.Verified,
+			CreatedAt: receipt.CreatedAt,
+			Warning:   "Webhook received but processing job could not be queued",
+		})
+		return
+	}
+
 	// Return response
 	c.JSON(http.StatusOK, models.WebhookResponse{
 		ID:        receipt.ID,
 		Verified:  receipt.Verified,
 		CreatedAt: receipt.CreatedAt,
+		JobID:     jobID,
 	})
 }
 

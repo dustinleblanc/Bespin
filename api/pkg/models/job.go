@@ -13,9 +13,11 @@ type Job struct {
 	Status    string      `json:"status"`
 }
 
-// RandomTextJobData represents the data for a random text generation job
-type RandomTextJobData struct {
-	Length int `json:"length"`
+// WebhookJobData represents the data for a webhook processing job
+type WebhookJobData struct {
+	WebhookID string `json:"webhookId"`
+	Source    string `json:"source"`
+	Event     string `json:"event"`
 }
 
 // JobResult represents the result of a job
@@ -42,11 +44,6 @@ func NewJob(jobType string, data interface{}) *Job {
 		CreatedAt: time.Now(),
 		Status:    JobStatusQueued,
 	}
-}
-
-// RandomTextJobRequest represents the request to create a random text job
-type RandomTextJobRequest struct {
-	Length int `json:"length" binding:"min=1"`
 }
 
 // JobResponse represents the response when creating a job

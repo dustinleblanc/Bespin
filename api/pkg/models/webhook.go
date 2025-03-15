@@ -33,6 +33,8 @@ type WebhookResponse struct {
 	ID        string    `json:"id"`
 	Verified  bool      `json:"verified"`
 	CreatedAt time.Time `json:"created_at"`
+	JobID     string    `json:"job_id,omitempty"`
+	Warning   string    `json:"warning,omitempty"`
 }
 
 // NewWebhookReceipt creates a new webhook receipt
