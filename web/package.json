@@ -33,7 +33,7 @@
     "@typescript-eslint/parser": "^8.26.1",
     "@vitejs/plugin-vue": "^5.2.1",
     "@vitest/coverage-v8": "^1.4.0",
-    "@vitest/ui": "^3.0.8",
+    "@vitest/ui": "^1.4.0",
     "eslint": "^8.48.0",
     "eslint-config-prettier": "^10.1.1",
     "eslint-plugin-prettier": "^5.2.3",
@@ -41,7 +41,7 @@
     "happy-dom": "^17.4.4",
     "prettier": "^3.5.3",
     "unplugin-vue-components": "^28.4.1",
-    "vitest": "^3.0.8",
+    "vitest": "^1.4.0",
     "vue-eslint-parser": "^10.1.1"
   }
 }
