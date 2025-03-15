@@ -31,11 +31,6 @@ func SetupRouter(handlers *Handlers, wsServer *websocket.Server) *gin.Engine {
 	// API routes
 	api := r.Group("/api")
 	{
-		jobs := api.Group("/jobs")
-		{
-			jobs.POST("/random-text", handlers.CreateRandomTextJob)
-		}
-
 		webhooks := api.Group("/webhooks")
 		{
 			webhooks.POST("/:source", handlers.ReceiveWebhook)
