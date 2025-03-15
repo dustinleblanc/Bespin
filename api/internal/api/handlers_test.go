@@ -23,13 +23,13 @@ import (
 func init() {
 	// Set up test environment
 	os.Setenv("GO_ENV", "test")
-	os.Setenv("TEST_WEBHOOK_SECRET", "test-secret-for-testing")
+	os.Setenv("GITHUB_WEBHOOK_SECRET", "test-secret-for-testing")
 }
 
 func setupTestServer(t *testing.T) (*webhook.MockRepository, *gin.Engine) {
 	// Set up test environment for each test
 	os.Setenv("GO_ENV", "test")
-	os.Setenv("TEST_WEBHOOK_SECRET", "test-secret-for-testing")
+	os.Setenv("GITHUB_WEBHOOK_SECRET", "test-secret-for-testing")
 
 	jobQueue := &queue.MockJobQueue{}
 	repository := webhook.NewMockRepository()
@@ -52,7 +52,7 @@ func TestReceiveWebhook(t *testing.T) {
 	}{
 		{
 			name:   "Valid webhook",
-			source: "test",
+			source: "github",
 			payload: map[string]interface{}{
 				"event": "test-event",
 				"data":  "test-data",
@@ -64,7 +64,7 @@ func TestReceiveWebhook(t *testing.T) {
 		},
 		{
 			name:   "Invalid signature",
-			source: "test",
+			source: "github",
 			payload: map[string]interface{}{
 				"event": "test-event",
 				"data":  "test-data",
@@ -76,7 +76,7 @@ func TestReceiveWebhook(t *testing.T) {
 		},
 		{
 			name:   "Missing signature",
-			source: "test",
+			source: "github",
 			payload: map[string]interface{}{
 				"event": "test-event",
 				"data":  "test-data",
@@ -172,10 +172,10 @@ func TestReceiveWebhookJobQueueFailure(t *testing.T) {
 	}
 	payloadBytes, _ := json.Marshal(payload)
 	factory := webhook.NewFactory()
-	signature := factory.GenerateSignature("test", payloadBytes)
+	signature := factory.GenerateSignature("github", payloadBytes)
 
 	// Send the request
-	req, _ := http.NewRequest("POST", "/api/webhooks/test", bytes.NewBuffer(payloadBytes))
+	req, _ := http.NewRequest("POST", "/api/webhooks/github", bytes.NewBuffer(payloadBytes))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Webhook-Signature", signature)
 
@@ -197,7 +197,7 @@ func TestReceiveWebhookJobQueueFailure(t *testing.T) {
 	// Verify webhook was still stored
 	stored, err := repository.GetByID(repository.Context(), response.ID)
 	assert.NoError(t, err)
-	assert.Equal(t, "test", stored.Source)
+	assert.Equal(t, "github", stored.Source)
 	assert.Equal(t, "test-event", stored.Event)
 }
 
@@ -227,7 +227,7 @@ func TestGetWebhook(t *testing.T) {
 			var webhookID string
 			if tc.setupWebhook {
 				receipt := factory.CreateWebhookReceipt(
-					"test",
+					"github",
 					"test-event",
 					map[string]interface{}{"data": "test"},
 				)
@@ -271,7 +271,7 @@ func TestListWebhooks(t *testing.T) {
 		},
 		{
 			name:           "List source webhooks",
-			source:         "test",
+			source:         "github",
 			webhookCount:   3,
 			expectedCount:  3,
 			expectedStatus: http.StatusOK,
@@ -293,7 +293,7 @@ func TestListWebhooks(t *testing.T) {
 			// Create test webhooks
 			for i := 0; i < tc.webhookCount; i++ {
 				receipt := factory.CreateWebhookReceipt(
-					"test",
+					"github",
 					"test-event",
 					map[string]interface{}{"data": "test"},
 				)
