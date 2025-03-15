@@ -1,0 +1,22 @@
+{
+  "name": "bespin",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Bespin monorepo",
+  "scripts": {
+    "dev": "docker compose -f infrastructure/docker-compose.yml up --build",
+    "dev:down": "docker compose -f infrastructure/docker-compose.yml down",
+    "dev:clean": "docker compose -f infrastructure/docker-compose.yml down -v",
+    "build": "pnpm -r build",
+    "test": "pnpm -r test",
+    "lint": "pnpm -r lint"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "packageManager": "pnpm@10.6.1",
+  "engines": {
+    "node": ">=18.0.0",
+    "pnpm": ">=8.0.0"
+  }
+}
