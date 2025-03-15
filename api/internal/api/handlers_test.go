@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 
 	"github.com/dustinleblanc/go-bespin/internal/queue"
@@ -18,7 +19,17 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+func init() {
+	// Set up test environment
+	os.Setenv("GO_ENV", "test")
+	os.Setenv("TEST_WEBHOOK_SECRET", "test-secret-for-testing")
+}
+
 func setupTestServer(t *testing.T) (*webhook.MockRepository, *gin.Engine) {
+	// Set up test environment for each test
+	os.Setenv("GO_ENV", "test")
+	os.Setenv("TEST_WEBHOOK_SECRET", "test-secret-for-testing")
+
 	jobQueue := queue.NewJobQueue("localhost:6379")
 	repository := webhook.NewMockRepository()
 	webhookService := webhook.NewService(repository)
