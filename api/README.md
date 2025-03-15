@@ -148,6 +148,70 @@ The job system allows clients to create and monitor jobs through a REST API and 
 
 - `GET /api/ws/jobs` - WebSocket endpoint for job updates
 
+## WebSocket Server
+
+The WebSocket server provides real-time job status updates to clients. It is built using the `melody` WebSocket framework and supports:
+
+- Job-specific status notifications
+- Multiple clients per job
+- Status history for new connections
+- Future support for team/site-wide broadcasts
+
+### Features
+
+- **Job-Specific Updates**: Each client subscribes to updates for a specific job
+- **Status History**: New clients receive the latest status upon connection
+- **Efficient Broadcasting**: Uses melody's filtered broadcasting for targeted updates
+- **Connection Management**: Automatic handling of connection lifecycle and ping/pong
+- **Origin Control**: Configurable origin checking for security
+
+### WebSocket Endpoint
+
+- `GET /api/ws` - WebSocket endpoint for job updates
+  - Query parameters:
+    - `job_id` - ID of the job to subscribe to
+  - Messages:
+    ```json
+    {
+      "type": "job_status",
+      "job_id": "string",
+      "status": "string", // pending, running, completed, failed
+      "result": "any"     // optional result data
+    }
+    ```
+
+### Example Usage
+
+```javascript
+// Connect to WebSocket
+const ws = new WebSocket(`ws://localhost:3002/api/ws?job_id=${jobId}`);
+
+// Handle messages
+ws.onmessage = (event) => {
+  const data = JSON.parse(event.data);
+  console.log(`Job ${data.job_id} status: ${data.status}`);
+  if (data.result) {
+    console.log(`Result: ${data.result}`);
+  }
+};
+```
+
+### Implementation Details
+
+The WebSocket server uses the `melody` framework for efficient WebSocket handling:
+
+- Connection management is handled automatically
+- Messages are filtered by job ID using `BroadcastFilter`
+- Status history is maintained for each job
+- Connection lifecycle events (connect, disconnect) are logged
+- Future support for team/site-wide broadcasts is planned
+
+### Security
+
+- Origin checking is configurable via `CheckOrigin` function
+- Job IDs are validated before establishing connections
+- Messages are filtered to ensure clients only receive updates for their subscribed job
+
 ## Development
 
 ### Prerequisites

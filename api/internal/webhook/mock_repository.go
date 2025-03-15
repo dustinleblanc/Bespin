@@ -5,15 +5,16 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/dustinleblanc/go-bespin/pkg/models"
+	"github.com/dustinleblanc/go-bespin-api/pkg/models"
+	"github.com/stretchr/testify/mock"
 )
 
-// MockRepository implements the Repository interface for testing
+// MockRepository is a mock implementation of the Repository interface
 type MockRepository struct {
+	mock.Mock
 	webhooks map[string]*models.WebhookReceipt
 	sources  map[string][]string
 	mu       sync.RWMutex
-	ctx      context.Context
 }
 
 // NewMockRepository creates a new mock repository
@@ -21,17 +22,11 @@ func NewMockRepository() *MockRepository {
 	return &MockRepository{
 		webhooks: make(map[string]*models.WebhookReceipt),
 		sources:  make(map[string][]string),
-		ctx:      context.Background(),
 	}
 }
 
-// Context returns the mock repository's context
-func (r *MockRepository) Context() context.Context {
-	return r.ctx
-}
-
-// Store stores a webhook receipt in memory
-func (r *MockRepository) Store(ctx context.Context, receipt *models.WebhookReceipt) error {
+// Create stores a webhook receipt in memory
+func (r *MockRepository) Create(ctx context.Context, receipt *models.WebhookReceipt) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -64,6 +59,19 @@ func (r *MockRepository) GetByID(ctx context.Context, id string) (*models.Webhoo
 	}
 
 	return receipt, nil
+}
+
+// Update updates a webhook receipt in memory
+func (r *MockRepository) Update(ctx context.Context, receipt *models.WebhookReceipt) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if _, ok := r.webhooks[receipt.ID]; !ok {
+		return fmt.Errorf("webhook receipt not found: %s", receipt.ID)
+	}
+
+	r.webhooks[receipt.ID] = receipt
+	return nil
 }
 
 // List lists webhook receipts by source from memory
@@ -103,13 +111,13 @@ func (r *MockRepository) List(ctx context.Context, source string, limit, offset 
 }
 
 // Count counts webhook receipts by source from memory
-func (r *MockRepository) Count(ctx context.Context, source string) (int, error) {
+func (r *MockRepository) Count(ctx context.Context, source string) (int64, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
 	if source == "" {
-		return len(r.sources["all"]), nil
+		return int64(len(r.sources["all"])), nil
 	}
 
-	return len(r.sources[source]), nil
+	return int64(len(r.sources[source])), nil
 }

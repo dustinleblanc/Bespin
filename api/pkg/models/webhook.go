@@ -5,19 +5,33 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"gorm.io/datatypes"
 )
 
-// WebhookReceipt represents a received webhook
+// WebhookStatus represents the status of a webhook receipt
+type WebhookStatus string
+
+const (
+	// WebhookStatusPending indicates the webhook is pending processing
+	WebhookStatusPending WebhookStatus = "pending"
+	// WebhookStatusProcessing indicates the webhook is being processed
+	WebhookStatusProcessing WebhookStatus = "processing"
+	// WebhookStatusCompleted indicates the webhook has been processed successfully
+	WebhookStatusCompleted WebhookStatus = "completed"
+	// WebhookStatusFailed indicates the webhook processing failed
+	WebhookStatusFailed WebhookStatus = "failed"
+)
+
+// WebhookReceipt represents a webhook receipt
 type WebhookReceipt struct {
-	ID        string         `json:"id" gorm:"primaryKey;type:uuid"`
-	Source    string         `json:"source" gorm:"index;type:varchar(255)"`
-	Event     string         `json:"event" gorm:"index;type:varchar(255)"`
-	Payload   datatypes.JSON `json:"payload" gorm:"type:jsonb"`
-	Headers   datatypes.JSON `json:"headers" gorm:"type:jsonb"`
-	Signature string         `json:"signature" gorm:"type:text"`
-	Verified  bool           `json:"verified" gorm:"index"`
-	CreatedAt time.Time      `json:"created_at" gorm:"index;autoCreateTime"`
+	ID        string        `json:"id" gorm:"primaryKey"`
+	Source    string        `json:"source" gorm:"index"`
+	Event     string        `json:"event" gorm:"index"`
+	Payload   []byte        `json:"payload"`
+	Signature string        `json:"signature"`
+	Status    WebhookStatus `json:"status" gorm:"index"`
+	Error     string        `json:"error,omitempty"`
+	CreatedAt time.Time     `json:"created_at"`
+	UpdatedAt time.Time     `json:"updated_at"`
 }
 
 // WebhookRequest represents the request to create a webhook receipt
@@ -28,37 +42,58 @@ type WebhookRequest struct {
 	Signature string                 `json:"signature" binding:"required"`
 }
 
-// WebhookResponse represents the response when creating a webhook receipt
+// WebhookResponse represents the response to a webhook request
 type WebhookResponse struct {
 	ID        string    `json:"id"`
-	Verified  bool      `json:"verified"`
+	TaskID    string    `json:"task_id"`
+	Status    string    `json:"status"`
 	CreatedAt time.Time `json:"created_at"`
-	JobID     string    `json:"job_id,omitempty"`
-	Warning   string    `json:"warning,omitempty"`
+	Message   string    `json:"message,omitempty"`
 }
 
 // NewWebhookReceipt creates a new webhook receipt
-func NewWebhookReceipt(source, event string, payload map[string]interface{}, headers map[string]string, signature string, verified bool) *WebhookReceipt {
-	// Convert headers map to JSON-compatible map
-	jsonHeaders := make(map[string]interface{})
-	for k, v := range headers {
-		jsonHeaders[k] = v
-	}
-
-	// Convert payload and headers to JSON
-	payloadBytes, _ := json.Marshal(payload)
-	headersBytes, _ := json.Marshal(jsonHeaders)
-
+func NewWebhookReceipt(source, event string, payload []byte, signature string) *WebhookReceipt {
 	return &WebhookReceipt{
 		ID:        uuid.New().String(),
 		Source:    source,
 		Event:     event,
-		Payload:   datatypes.JSON(payloadBytes),
-		Headers:   datatypes.JSON(headersBytes),
+		Payload:   payload,
 		Signature: signature,
-		Verified:  verified,
+		Status:    WebhookStatusPending,
 		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
 	}
+}
+
+// SetStatus sets the status of the webhook receipt
+func (r *WebhookReceipt) SetStatus(status WebhookStatus, err error) {
+	r.Status = status
+	if err != nil {
+		r.Error = err.Error()
+	} else {
+		r.Error = ""
+	}
+	r.UpdatedAt = time.Now()
+}
+
+// IsComplete returns true if the webhook receipt has been processed
+func (r *WebhookReceipt) IsComplete() bool {
+	return r.Status == WebhookStatusCompleted || r.Status == WebhookStatusFailed
+}
+
+// IsPending returns true if the webhook receipt is pending processing
+func (r *WebhookReceipt) IsPending() bool {
+	return r.Status == WebhookStatusPending
+}
+
+// IsProcessing returns true if the webhook receipt is being processed
+func (r *WebhookReceipt) IsProcessing() bool {
+	return r.Status == WebhookStatusProcessing
+}
+
+// IsFailed returns true if the webhook receipt processing failed
+func (r *WebhookReceipt) IsFailed() bool {
+	return r.Status == WebhookStatusFailed
 }
 
 // MarshalBinary implements the encoding.BinaryMarshaler interface

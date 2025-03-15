@@ -2,68 +2,64 @@ package jobs
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"math/rand"
 	"strings"
 	"time"
 
-	"github.com/dustinleblanc/go-bespin/internal/queue"
-	"github.com/dustinleblanc/go-bespin/pkg/models"
+	"github.com/dustinleblanc/go-bespin-worker/pkg/tasks"
+	"github.com/hibiken/asynq"
 )
 
 // Processor handles job processing
 type Processor struct {
-	jobQueue *queue.JobQueue
-	logger   *log.Logger
+	logger *log.Logger
 }
 
 // NewProcessor creates a new job processor
-func NewProcessor(jobQueue *queue.JobQueue) *Processor {
+func NewProcessor() *Processor {
 	return &Processor{
-		jobQueue: jobQueue,
-		logger:   log.New(log.Writer(), "[JobProcessor] ", log.LstdFlags),
+		logger: log.New(log.Writer(), "[JobProcessor] ", log.LstdFlags),
 	}
 }
 
-// Start starts the job processor
-func (p *Processor) Start(ctx context.Context) {
-	p.logger.Println("Starting job processor")
-
-	// Register job handlers
-	p.registerJobHandlers(ctx)
-}
-
-// registerJobHandlers registers handlers for different job types
-func (p *Processor) registerJobHandlers(ctx context.Context) {
-	// Register random text job handler
-	p.jobQueue.StartProcessing(ctx, "random-text", p.processRandomTextJob)
-}
-
-// processRandomTextJob processes a random text job
-func (p *Processor) processRandomTextJob(job *models.Job) (interface{}, error) {
-	p.logger.Printf("Processing random text job: %s", job.ID)
-
-	// Extract job data
-	data, ok := job.Data.(map[string]interface{})
-	if !ok {
-		p.logger.Printf("Invalid job data format: %v", job.Data)
-		return nil, ErrInvalidJobData
+// HandleRandomTextTask processes a random text job
+func (p *Processor) HandleRandomTextTask(ctx context.Context, t *asynq.Task) error {
+	payload, err := tasks.DeserializeRandomText(t.Payload())
+	if err != nil {
+		return fmt.Errorf("failed to deserialize random text payload: %w", err)
 	}
 
-	// Get length parameter
-	lengthFloat, ok := data["length"].(float64)
-	if !ok {
-		p.logger.Printf("Invalid length parameter: %v", data["length"])
-		return nil, ErrInvalidJobData
-	}
-
-	length := int(lengthFloat)
+	p.logger.Printf("Processing random text job with length: %d", payload.Length)
 
 	// Generate random text
-	result := p.generateRandomText(length)
+	result := p.generateRandomText(payload.Length)
 
-	p.logger.Printf("Completed random text job: %s", job.ID)
-	return result, nil
+	// In a real application, you might want to store the result somewhere
+	// or send it back through a channel/webhook
+	p.logger.Printf("Generated random text: %s", result)
+
+	return nil
+}
+
+// HandleWebhookTask processes a webhook job
+func (p *Processor) HandleWebhookTask(ctx context.Context, t *asynq.Task) error {
+	payload, err := tasks.DeserializeWebhook(t.Payload())
+	if err != nil {
+		return fmt.Errorf("failed to deserialize webhook payload: %w", err)
+	}
+
+	p.logger.Printf("Processing webhook job: ID=%s, Source=%s, Event=%s",
+		payload.WebhookID, payload.Source, payload.Event)
+
+	// Here you would typically:
+	// 1. Fetch the webhook data from the database
+	// 2. Process it according to the source and event type
+	// 3. Update the webhook status in the database
+	// 4. Send any necessary notifications
+
+	return nil
 }
 
 // generateRandomText generates a random text of the specified length

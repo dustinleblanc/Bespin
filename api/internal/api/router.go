@@ -1,48 +1,41 @@
 package api
 
 import (
-	"github.com/dustinleblanc/go-bespin/internal/websocket"
+	"github.com/dustinleblanc/go-bespin-api/internal/queue"
+	"github.com/dustinleblanc/go-bespin-api/internal/webhook"
+	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 )
 
-// SetupRouter sets up the API router
-func SetupRouter(handlers *Handlers, wsServer *websocket.Server) *gin.Engine {
-	r := gin.Default()
+// NewRouter creates a new router with all routes configured
+func NewRouter(jobQueue queue.Queue, webhookService *webhook.Service) *gin.Engine {
+	router := gin.Default()
 
-	// CORS middleware
-	r.Use(func(c *gin.Context) {
-		c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
-		c.Writer.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Webhook-Signature, X-Webhook-Event")
+	// Configure CORS
+	router.Use(cors.New(cors.Config{
+		AllowOrigins:     []string{"*"},
+		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
+		AllowHeaders:     []string{"Origin", "Content-Type", "Accept", "Authorization", "X-Event-Type", "X-Signature"},
+		ExposeHeaders:    []string{"Content-Length"},
+		AllowCredentials: true,
+	}))
 
-		if c.Request.Method == "OPTIONS" {
-			c.AbortWithStatus(204)
-			return
-		}
-
-		c.Next()
-	})
-
-	// WebSocket handler
-	r.GET("/api/ws/jobs", func(c *gin.Context) {
-		wsServer.ServeWs(c.Writer, c.Request)
-	})
+	// Create handlers
+	handlers := NewHandlers(jobQueue, webhookService)
 
 	// API routes
-	api := r.Group("/api")
+	api := router.Group("/api")
 	{
-		webhooks := api.Group("/webhooks")
-		{
-			webhooks.POST("/:source", handlers.ReceiveWebhook)
-			webhooks.GET("/:id", handlers.GetWebhook)
-			webhooks.GET("", handlers.ListWebhooks)
-		}
+		// Random text generation
+		api.GET("/random-text", handlers.HandleRandomText)
+		api.GET("/jobs/:id", handlers.HandleGetJobResult)
 
-		jobs := api.Group("/jobs")
-		{
-			jobs.POST("/random-text", handlers.CreateRandomTextJob)
-		}
+		// Webhooks
+		api.POST("/webhooks/:source", handlers.HandleWebhook)
+
+		// WebSocket
+		api.GET("/ws", handlers.HandleWebSocket)
 	}
 
-	return r
+	return router
 }

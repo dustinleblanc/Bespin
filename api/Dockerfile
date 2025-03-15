@@ -1,9 +1,14 @@
 FROM golang:1.24-alpine
 
-WORKDIR /app
+# Set up the workspace
+WORKDIR /workspace
 
-# Copy the source code
-COPY . .
+# Copy both modules
+COPY worker /workspace/worker/
+COPY api /workspace/api/
+
+# Set working directory to the API module
+WORKDIR /workspace/api
 
 # Download dependencies and build the application
 RUN go mod download && \
@@ -12,7 +17,7 @@ RUN go mod download && \
     go build -o bin/bespin-api ./cmd/api
 
 # Set the working directory to where the binary is
-WORKDIR /app/bin
+WORKDIR /workspace/api/bin
 
 # Expose the port
 EXPOSE 3002

@@ -4,201 +4,98 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"time"
 
-	"github.com/dustinleblanc/go-bespin/pkg/models"
-	"github.com/go-redis/redis/v8"
-	"github.com/google/uuid"
+	"github.com/dustinleblanc/go-bespin-api/pkg/models"
+	"github.com/hibiken/asynq"
 )
 
-// JobQueueInterface defines the interface for job queue operations
-type JobQueueInterface interface {
-	AddJob(jobType string, data interface{}) (string, error)
-	GetJob(ctx context.Context, jobID string) (*models.Job, error)
+// Queue represents a job queue
+type Queue interface {
+	// AddJob adds a job to the queue
+	AddJob(ctx context.Context, job *models.Job) (string, error)
+	// GetJobResult gets a job result
 	GetJobResult(ctx context.Context, jobID string) (*models.JobResult, error)
-	GetRedisClient() *redis.Client
-	StartProcessing(ctx context.Context, jobType string, handler JobHandler)
 }
 
-// JobQueue handles job queue operations
-type JobQueue struct {
-	redisClient *redis.Client
-	logger      *log.Logger
+// AsynqQueue implements Queue using Asynq
+type AsynqQueue struct {
+	client    *asynq.Client
+	inspector *asynq.Inspector
 }
 
-// JobHandler is a function that processes a job
-type JobHandler func(job *models.Job) (interface{}, error)
+// NewAsynqQueue creates a new AsynqQueue
+func NewAsynqQueue(redisAddr string) (*AsynqQueue, error) {
+	client := asynq.NewClient(asynq.RedisClientOpt{Addr: redisAddr})
+	inspector := asynq.NewInspector(asynq.RedisClientOpt{Addr: redisAddr})
 
-// NewJobQueue creates a new job queue
-func NewJobQueue(redisAddr string) *JobQueue {
-	client := redis.NewClient(&redis.Options{
-		Addr: redisAddr,
-	})
-
-	logger := log.New(log.Writer(), "[JobQueue] ", log.LstdFlags)
-
-	return &JobQueue{
-		redisClient: client,
-		logger:      logger,
-	}
+	return &AsynqQueue{
+		client:    client,
+		inspector: inspector,
+	}, nil
 }
 
 // AddJob adds a job to the queue
-func (q *JobQueue) AddJob(jobType string, data interface{}) (string, error) {
-	ctx := context.Background()
-	jobID := uuid.New().String()
-
-	job := &models.Job{
-		ID:        jobID,
-		Type:      jobType,
-		Data:      data,
-		CreatedAt: time.Now(),
-		Status:    models.JobStatusQueued,
-	}
-
-	jobJSON, err := json.Marshal(job)
+func (q *AsynqQueue) AddJob(ctx context.Context, job *models.Job) (string, error) {
+	// Serialize the job data
+	payload, err := json.Marshal(job.Data)
 	if err != nil {
-		return "", fmt.Errorf("failed to marshal job: %w", err)
+		return "", fmt.Errorf("failed to marshal job data: %w", err)
 	}
 
-	// Store job data
-	err = q.redisClient.Set(ctx, fmt.Sprintf("job:%s", jobID), jobJSON, 0).Err()
+	// Create the task
+	task := asynq.NewTask(string(job.Type), payload)
+
+	// Enqueue the task
+	info, err := q.client.EnqueueContext(ctx, task)
 	if err != nil {
-		return "", fmt.Errorf("failed to store job: %w", err)
+		return "", fmt.Errorf("failed to enqueue task: %w", err)
 	}
 
-	// Add job to queue
-	err = q.redisClient.LPush(ctx, fmt.Sprintf("queue:%s", jobType), jobID).Err()
-	if err != nil {
-		return "", fmt.Errorf("failed to add job to queue: %w", err)
-	}
-
-	q.logger.Printf("Added job %s of type %s to queue", jobID, jobType)
-	return jobID, nil
+	return info.ID, nil
 }
 
-// StartProcessing starts processing jobs of the given type
-func (q *JobQueue) StartProcessing(ctx context.Context, jobType string, handler JobHandler) {
-	q.logger.Printf("Starting job processor for type: %s", jobType)
-
-	go func() {
-		for {
-			select {
-			case <-ctx.Done():
-				q.logger.Printf("Stopping job processor for type: %s", jobType)
-				return
-			default:
-				// Try to get a job from the queue
-				result, err := q.redisClient.BRPop(ctx, 5*time.Second, fmt.Sprintf("queue:%s", jobType)).Result()
-				if err != nil {
-					if err != redis.Nil {
-						q.logger.Printf("Error getting job from queue: %v", err)
-					}
-					continue
-				}
-
-				if len(result) < 2 {
-					continue
-				}
-
-				jobID := result[1]
-				q.processJob(ctx, jobID, handler)
-			}
+// GetJobResult gets a job result
+func (q *AsynqQueue) GetJobResult(ctx context.Context, jobID string) (*models.JobResult, error) {
+	// Get the task info
+	info, err := q.inspector.GetTaskInfo("default", jobID)
+	if err != nil {
+		if err == asynq.ErrTaskNotFound {
+			return nil, nil
 		}
-	}()
+		return nil, fmt.Errorf("failed to get task info: %w", err)
+	}
+
+	// Create the job result
+	result := &models.JobResult{
+		ID:        jobID,
+		Status:    models.JobStatusPending,
+		CreatedAt: time.Now(), // Asynq doesn't expose task creation time
+	}
+
+	// Update the status based on the task state
+	switch info.State.String() {
+	case "active":
+		result.Status = models.JobStatusProcessing
+	case "completed":
+		result.Status = models.JobStatusCompleted
+		result.CompletedAt = &info.CompletedAt
+		result.Result = string(info.Result)
+	case "failed":
+		result.Status = models.JobStatusFailed
+		result.Error = info.LastErr
+	case "retry":
+		result.Status = models.JobStatusRetrying
+		result.Error = info.LastErr
+	}
+
+	return result, nil
 }
 
-// processJob processes a job
-func (q *JobQueue) processJob(ctx context.Context, jobID string, handler JobHandler) {
-	q.logger.Printf("Processing job: %s", jobID)
-
-	// Get job data
-	jobJSON, err := q.redisClient.Get(ctx, fmt.Sprintf("job:%s", jobID)).Result()
-	if err != nil {
-		q.logger.Printf("Error getting job data: %v", err)
-		return
+// Close closes the queue
+func (q *AsynqQueue) Close() error {
+	if err := q.client.Close(); err != nil {
+		return fmt.Errorf("failed to close client: %w", err)
 	}
-
-	var job models.Job
-	if err := json.Unmarshal([]byte(jobJSON), &job); err != nil {
-		q.logger.Printf("Error unmarshaling job data: %v", err)
-		return
-	}
-
-	// Update job status to processing
-	job.Status = models.JobStatusProcessing
-	updatedJobJSON, _ := json.Marshal(job)
-	q.redisClient.Set(ctx, fmt.Sprintf("job:%s", jobID), updatedJobJSON, 0)
-
-	// Process the job
-	result, err := handler(&job)
-
-	jobResult := models.JobResult{
-		JobID:       jobID,
-		CompletedAt: time.Now(),
-	}
-
-	if err != nil {
-		q.logger.Printf("Error processing job %s: %v", jobID, err)
-		// Update job status to failed
-		job.Status = models.JobStatusFailed
-		updatedJobJSON, _ := json.Marshal(job)
-		q.redisClient.Set(ctx, fmt.Sprintf("job:%s", jobID), updatedJobJSON, 0)
-
-		// Store error
-		jobResult.Error = err.Error()
-	} else {
-		// Update job status to completed
-		job.Status = models.JobStatusCompleted
-		updatedJobJSON, _ := json.Marshal(job)
-		q.redisClient.Set(ctx, fmt.Sprintf("job:%s", jobID), updatedJobJSON, 0)
-
-		// Store result
-		jobResult.Result = result
-	}
-
-	// Store job result
-	resultJSON, _ := json.Marshal(jobResult)
-	q.redisClient.Set(ctx, fmt.Sprintf("job:%s:result", jobID), resultJSON, 0)
-
-	// Publish completion event
-	q.redisClient.Publish(ctx, fmt.Sprintf("job-completed:%s", jobID), resultJSON)
-
-	q.logger.Printf("Completed job: %s", jobID)
-}
-
-// GetJob gets a job by ID
-func (q *JobQueue) GetJob(ctx context.Context, jobID string) (*models.Job, error) {
-	jobJSON, err := q.redisClient.Get(ctx, fmt.Sprintf("job:%s", jobID)).Result()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get job: %w", err)
-	}
-
-	var job models.Job
-	if err := json.Unmarshal([]byte(jobJSON), &job); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal job: %w", err)
-	}
-
-	return &job, nil
-}
-
-// GetJobResult gets a job result by ID
-func (q *JobQueue) GetJobResult(ctx context.Context, jobID string) (*models.JobResult, error) {
-	resultJSON, err := q.redisClient.Get(ctx, fmt.Sprintf("job:%s:result", jobID)).Result()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get job result: %w", err)
-	}
-
-	var result models.JobResult
-	if err := json.Unmarshal([]byte(resultJSON), &result); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal job result: %w", err)
-	}
-
-	return &result, nil
-}
-
-// GetRedisClient returns the Redis client
-func (q *JobQueue) GetRedisClient() *redis.Client {
-	return q.redisClient
+	return nil
 }
