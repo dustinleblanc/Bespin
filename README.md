@@ -34,6 +34,50 @@ bespin/
 - Docker and Docker Compose
 - PostgreSQL (included in Docker Compose setup)
 
+## Testing Philosophy
+
+Bespin follows a comprehensive testing strategy across both its API and web frontend:
+
+### API Testing
+
+- Focus on testing public interfaces and service boundaries
+- Mock implementations for external dependencies
+- Emphasis on behavior verification over implementation details
+- Currently tested components:
+  - API handlers
+  - Webhook system
+  - WebSocket server
+
+### Web Frontend Testing
+
+- Component-driven testing using Vitest and Testing Library
+- Focus on user interactions and accessibility
+- Real-world use case scenarios
+- Store testing for state management
+- Integration tests for component interactions
+
+## Running Tests
+
+```bash
+# Run all tests (API and web)
+make test
+
+# Run API tests only
+cd api && go test ./... -v
+
+# Run web tests once and exit
+cd web && pnpm test
+
+# Run web tests in watch mode (for development)
+cd web && pnpm test:watch
+
+# Run web tests with UI
+cd web && pnpm test:ui
+
+# Generate web test coverage
+cd web && pnpm test:coverage
+```
+
 ## Running the Application
 
 ### Using the Makefile
