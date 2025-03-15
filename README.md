@@ -190,13 +190,36 @@ The WebSocket endpoint sends job update events in the following format:
 
 ```json
 {
-  "id": "20230101120000.000000000",
-  "status": "completed",
-  "result": "Random text result...",
-  "error": "",
-  "updated_at": "2023-01-01T12:00:00Z"
+  "type": "job_status",
+  "job_id": "string",
+  "status": "string", // pending, running, completed, failed
+  "result": "any"     // optional result data
 }
 ```
+
+### Connecting to WebSocket
+
+Connect to the WebSocket endpoint with a job ID:
+
+```javascript
+const ws = new WebSocket(`ws://localhost:3002/api/ws?job_id=${jobId}`);
+
+ws.onmessage = (event) => {
+  const data = JSON.parse(event.data);
+  console.log(`Job ${data.job_id} status: ${data.status}`);
+  if (data.result) {
+    console.log(`Result: ${data.result}`);
+  }
+};
+```
+
+### WebSocket Features
+
+- **Job-Specific Updates**: Each client subscribes to updates for a specific job
+- **Status History**: New clients receive the latest status upon connection
+- **Efficient Broadcasting**: Messages are filtered by job ID
+- **Connection Management**: Automatic handling of connection lifecycle
+- **Future Features**: Support for team and site-wide broadcasts planned
 
 ## Webhook Support
 

@@ -126,7 +126,8 @@ jobs:
       - name: Build and test API Docker image
         uses: docker/build-push-action@v4
         with:
-          context: ./api
+          context: .
+          file: ./api/Dockerfile
           push: false
           tags: bespin-api:latest
           load: true
@@ -140,14 +141,19 @@ jobs:
           load: true
 
       - name: Test Docker Compose setup
+        env:
+          DB_PASSWORD: postgres
+          GITHUB_WEBHOOK_SECRET: test-secret-for-testing
+          STRIPE_WEBHOOK_SECRET: test-secret-for-testing
+          SENDGRID_WEBHOOK_SECRET: test-secret-for-testing
         run: |
-          docker-compose up -d
+          docker compose up -d
           sleep 30
-          docker-compose ps
+          docker compose ps
           curl -f http://localhost:3002/api/ || exit 1
           curl -f http://localhost:8000/ || exit 1
-          docker-compose logs
-          docker-compose down
+          docker compose logs
+          docker compose down
 
   deploy:
     runs-on: ubuntu-latest
