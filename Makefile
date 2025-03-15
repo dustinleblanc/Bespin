@@ -1,4 +1,4 @@
-.PHONY: all dev docker clean build build-api build-web test help deps lint
+.PHONY: all dev docker clean build build-api build-web build-worker test help deps lint
 
 # Colors for output
 GREEN := \033[0;32m
@@ -19,9 +19,11 @@ help:
 	@echo "  make build       - Build all components"
 	@echo "  make build-api   - Build the API server"
 	@echo "  make build-web   - Build the web client"
+	@echo "  make build-worker - Build the worker service"
 	@echo "  make test        - Run tests for all components"
 	@echo "  make test-api    - Run API tests"
 	@echo "  make test-web    - Run web tests"
+	@echo "  make test-worker - Run worker tests"
 	@echo "  make deps        - Install dependencies for all components"
 	@echo "  make lint        - Run linters for all components"
 	@echo "  make clean       - Clean up resources"
@@ -59,7 +61,7 @@ docker: check-tools
 	@echo "${GREEN}Web: http://localhost:8000${NC}"
 
 # Build all components
-build: build-api build-web
+build: build-api build-web build-worker
 
 # Build the API server
 build-api:
@@ -73,8 +75,14 @@ build-web:
 	@cd web && pnpm run build
 	@echo "${GREEN}Web client built successfully${NC}"
 
+# Build the worker service
+build-worker:
+	@echo "${YELLOW}Building worker service...${NC}"
+	@cd worker && make build
+	@echo "${GREEN}Worker service built successfully: worker/bin/bespin-worker${NC}"
+
 # Run tests for all components
-test: test-api test-web
+test: test-api test-web test-worker
 
 # Run API tests
 test-api:
@@ -86,8 +94,13 @@ test-web:
 	@echo "${YELLOW}Running web tests...${NC}"
 	@cd web && pnpm run test
 
+# Run worker tests
+test-worker:
+	@echo "${YELLOW}Running worker tests...${NC}"
+	@cd worker && make test
+
 # Install dependencies for all components
-deps: deps-api deps-web
+deps: deps-api deps-web deps-worker
 
 # Install API dependencies
 deps-api:
@@ -99,8 +112,13 @@ deps-web:
 	@echo "${YELLOW}Installing web dependencies...${NC}"
 	@cd web && pnpm install
 
+# Install worker dependencies
+deps-worker:
+	@echo "${YELLOW}Installing worker dependencies...${NC}"
+	@cd worker && make deps
+
 # Run linters for all components
-lint: lint-api lint-web
+lint: lint-api lint-web lint-worker
 
 # Run API linter
 lint-api:
@@ -111,6 +129,11 @@ lint-api:
 lint-web:
 	@echo "${YELLOW}Running web linter...${NC}"
 	@cd web && pnpm run lint
+
+# Run worker linter
+lint-worker:
+	@echo "${YELLOW}Running worker linter...${NC}"
+	@cd worker && make lint
 
 # Clean up resources
 clean:
