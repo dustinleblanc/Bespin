@@ -23,7 +23,7 @@ services:
     networks:
       - bespin-network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/api/"]
+      test: ["CMD", "curl", "-f", "http://localhost:8080/api/random-text"]
       interval: 10s
       timeout: 5s
       retries: 3
