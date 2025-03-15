@@ -22,13 +22,23 @@ type Service struct {
 
 // NewService creates a new webhook service
 func NewService(repository Repository) *Service {
-	// In a real application, these secrets would be loaded from a secure source
-	// like environment variables or a secrets manager
-	secrets := map[string]string{
-		"github":   os.Getenv("GITHUB_WEBHOOK_SECRET"),
-		"stripe":   os.Getenv("STRIPE_WEBHOOK_SECRET"),
-		"sendgrid": os.Getenv("SENDGRID_WEBHOOK_SECRET"),
-		"test":     "test-secret", // For testing purposes
+	// Load secrets from environment variables
+	secrets := make(map[string]string)
+
+	// Load webhook secrets from environment variables
+	if secret := os.Getenv("GITHUB_WEBHOOK_SECRET"); secret != "" {
+		secrets["github"] = secret
+	}
+	if secret := os.Getenv("STRIPE_WEBHOOK_SECRET"); secret != "" {
+		secrets["stripe"] = secret
+	}
+	if secret := os.Getenv("SENDGRID_WEBHOOK_SECRET"); secret != "" {
+		secrets["sendgrid"] = secret
+	}
+
+	// Only add test secret in test environment
+	if os.Getenv("GO_ENV") == "test" {
+		secrets["test"] = os.Getenv("TEST_WEBHOOK_SECRET")
 	}
 
 	return &Service{

@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/dustinleblanc/go-bespin/pkg/models"
@@ -20,13 +21,27 @@ type Factory struct {
 
 // NewFactory creates a new webhook factory
 func NewFactory() *Factory {
+	// Load secrets from environment variables
+	secrets := make(map[string]string)
+
+	// Load webhook secrets from environment variables
+	if secret := os.Getenv("GITHUB_WEBHOOK_SECRET"); secret != "" {
+		secrets["github"] = secret
+	}
+	if secret := os.Getenv("STRIPE_WEBHOOK_SECRET"); secret != "" {
+		secrets["stripe"] = secret
+	}
+	if secret := os.Getenv("SENDGRID_WEBHOOK_SECRET"); secret != "" {
+		secrets["sendgrid"] = secret
+	}
+
+	// Only add test secret in test environment
+	if os.Getenv("GO_ENV") == "test" {
+		secrets["test"] = os.Getenv("TEST_WEBHOOK_SECRET")
+	}
+
 	return &Factory{
-		secrets: map[string]string{
-			"github":   "github-secret",
-			"stripe":   "stripe-secret",
-			"sendgrid": "sendgrid-secret",
-			"test":     "test-secret",
-		},
+		secrets: secrets,
 	}
 }
 
