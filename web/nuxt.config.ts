@@ -4,11 +4,11 @@ export default defineNuxtConfig({
   modules: ['@pinia/nuxt', '@nuxtjs/tailwindcss'],
   devtools: { enabled: true },
   app: {
-    port: 8000
+    port: 8000,
   },
   runtimeConfig: {
     public: {
-      apiUrl: process.env.NUXT_PUBLIC_API_URL || 'http://localhost:3002'
-    }
-  }
+      apiUrl: process.env.NUXT_PUBLIC_API_URL || 'http://localhost:3002',
+    },
+  },
 })

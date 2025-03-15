@@ -1,8 +1,5 @@
 <template>
-  <div
-    :class="['status', `status-${status}`]"
-    @click="$emit('status-click', status)"
-  >
+  <div :class="['status', `status-${status}`]" @click="$emit('status-click', status)">
     {{ status }}
   </div>
 </template>

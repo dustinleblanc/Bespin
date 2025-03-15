@@ -20,7 +20,10 @@
       <div class="bg-white shadow-md rounded-lg p-6 mb-6">
         <h2 class="text-2xl font-bold mb-4">API Connection</h2>
         <div class="flex items-center mb-4">
-          <button @click="testApi" class="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded">
+          <button
+            class="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded"
+            @click="testApi"
+          >
             Test API Connection
           </button>
           <span v-if="testResponse" class="ml-4 text-green-500">Connected!</span>
@@ -36,9 +39,18 @@
         <h2 class="text-2xl font-bold mb-4">Create Random Text Job</h2>
         <div class="mb-4">
           <label class="block text-gray-700 mb-2">Text Length:</label>
-          <input v-model="textLength" type="number" min="1" max="1000" class="border rounded py-2 px-3 w-full" />
+          <input
+            v-model="textLength"
+            type="number"
+            min="1"
+            max="1000"
+            class="border rounded py-2 px-3 w-full"
+          />
         </div>
-        <button @click="createRandomTextJob" class="bg-green-500 hover:bg-green-600 text-white font-bold py-2 px-4 rounded">
+        <button
+          class="bg-green-500 hover:bg-green-600 text-white font-bold py-2 px-4 rounded"
+          @click="createRandomTextJob"
+        >
           Create Job
         </button>
         <div v-if="jobError" class="mt-4 text-red-500">{{ jobError }}</div>
@@ -51,10 +63,18 @@
       <div class="bg-white shadow-md rounded-lg p-6">
         <h2 class="text-2xl font-bold mb-4">Job Updates</h2>
         <div class="flex items-center mb-4">
-          <button v-if="!wsConnected" @click="connectWebSocket" class="bg-purple-500 hover:bg-purple-600 text-white font-bold py-2 px-4 rounded">
+          <button
+            v-if="!wsConnected"
+            class="bg-purple-500 hover:bg-purple-600 text-white font-bold py-2 px-4 rounded"
+            @click="connectWebSocket"
+          >
             Connect to WebSocket
           </button>
-          <button v-else @click="disconnectWebSocket" class="bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-4 rounded">
+          <button
+            v-else
+            class="bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-4 rounded"
+            @click="disconnectWebSocket"
+          >
             Disconnect
           </button>
           <span v-if="wsConnected" class="ml-4 text-green-500">Connected to WebSocket</span>
@@ -63,33 +83,42 @@
           No job updates received yet. Connect to WebSocket and create a job to see updates.
         </div>
         <div v-else class="space-y-4">
-          <div v-for="(update, index) in jobUpdates" :key="index"
-               class="border-l-4 p-4 rounded"
-               :class="{
-                 'border-yellow-500 bg-yellow-50': update.status === 'queued',
-                 'border-blue-500 bg-blue-50': update.status === 'processing',
-                 'border-green-500 bg-green-50': update.status === 'completed',
-                 'border-red-500 bg-red-50': update.status === 'failed'
-               }">
+          <div
+            v-for="(update, index) in jobUpdates"
+            :key="index"
+            class="border-l-4 p-4 rounded"
+            :class="{
+              'border-yellow-500 bg-yellow-50': update.status === 'queued',
+              'border-blue-500 bg-blue-50': update.status === 'processing',
+              'border-green-500 bg-green-50': update.status === 'completed',
+              'border-red-500 bg-red-50': update.status === 'failed',
+            }"
+          >
             <div class="flex justify-between">
               <h3 class="font-bold">Job {{ update.id }}</h3>
               <span class="text-sm">{{ new Date(update.updated_at).toLocaleString() }}</span>
             </div>
             <div class="mt-2">
-              <span class="inline-block px-2 py-1 text-xs rounded-full"
-                    :class="{
-                      'bg-yellow-200 text-yellow-800': update.status === 'queued',
-                      'bg-blue-200 text-blue-800': update.status === 'processing',
-                      'bg-green-200 text-green-800': update.status === 'completed',
-                      'bg-red-200 text-red-800': update.status === 'failed'
-                    }">
+              <span
+                class="inline-block px-2 py-1 text-xs rounded-full"
+                :class="{
+                  'bg-yellow-200 text-yellow-800': update.status === 'queued',
+                  'bg-blue-200 text-blue-800': update.status === 'processing',
+                  'bg-green-200 text-green-800': update.status === 'completed',
+                  'bg-red-200 text-red-800': update.status === 'failed',
+                }"
+              >
                 {{ update.status }}
               </span>
             </div>
             <div v-if="update.result" class="mt-2">
               <div class="font-semibold">Result:</div>
               <div class="bg-white p-2 rounded mt-1 text-sm">
-                {{ update.result.length > 100 ? update.result.substring(0, 100) + '...' : update.result }}
+                {{
+                  update.result.length > 100
+                    ? update.result.substring(0, 100) + '...'
+                    : update.result
+                }}
               </div>
             </div>
             <div v-if="update.error" class="mt-2 text-red-600">
@@ -104,149 +133,149 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue';
+import { ref, onMounted, onUnmounted } from 'vue'
 
 // Define types for API responses
 interface TestResponse {
-  message: string;
-  timestamp?: string;
+  message: string
+  timestamp?: string
 }
 
 interface Job {
-  id: string;
-  type: string;
-  status: 'queued' | 'processing' | 'completed' | 'failed';
+  id: string
+  type: string
+  status: 'queued' | 'processing' | 'completed' | 'failed'
   data: {
-    length?: number;
-  };
-  result?: string;
-  error?: string;
-  created_at: string;
-  updated_at: string;
+    length?: number
+  }
+  result?: string
+  error?: string
+  created_at: string
+  updated_at: string
 }
 
 interface JobUpdate {
-  id: string;
-  status: 'queued' | 'processing' | 'completed' | 'failed';
-  result?: string;
-  error?: string;
-  updated_at: string;
+  id: string
+  status: 'queued' | 'processing' | 'completed' | 'failed'
+  result?: string
+  error?: string
+  updated_at: string
 }
 
-const apiUrl = useRuntimeConfig().public.apiUrl;
-const testResponse = ref<TestResponse | null>(null);
-const testError = ref<string | null>(null);
-const jobResponse = ref<Job | null>(null);
-const jobError = ref<string | null>(null);
-const jobUpdates = ref<JobUpdate[]>([]);
-const textLength = ref(100);
-const wsConnected = ref(false);
-let ws: WebSocket | null = null;
+const apiUrl = useRuntimeConfig().public.apiUrl
+const testResponse = ref<TestResponse | null>(null)
+const testError = ref<string | null>(null)
+const jobResponse = ref<Job | null>(null)
+const jobError = ref<string | null>(null)
+const jobUpdates = ref<JobUpdate[]>([])
+const textLength = ref(100)
+const wsConnected = ref(false)
+let ws: WebSocket | null = null
 
 // Test API connection
 async function testApi() {
   try {
-    console.log('Testing API connection to:', `${apiUrl}/api/test`);
-    testError.value = null;
-    const response = await fetch(`${apiUrl}/api/test`);
+    console.info('Testing API connection to:', `${apiUrl}/api/test`)
+    testError.value = null
+    const response = await fetch(`${apiUrl}/api/test`)
     if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`API test failed with status ${response.status}: ${errorText}`);
+      const errorText = await response.text()
+      throw new Error(`API test failed with status ${response.status}: ${errorText}`)
     }
-    testResponse.value = await response.json();
-    console.log('API test response:', testResponse.value);
+    testResponse.value = await response.json()
+    console.info('API test response:', testResponse.value)
   } catch (err) {
-    console.error('API test error:', err);
-    testError.value = err instanceof Error ? err.message : 'Unknown error';
-    testResponse.value = null;
+    console.error('API test error:', err)
+    testError.value = err instanceof Error ? err.message : 'Unknown error'
+    testResponse.value = null
   }
 }
 
 // Create a random text job
 async function createRandomTextJob() {
   try {
-    console.log('Creating random text job with length:', textLength.value);
-    jobError.value = null;
+    console.info('Creating random text job with length:', textLength.value)
+    jobError.value = null
     const response = await fetch(`${apiUrl}/api/jobs/random-text`, {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ length: textLength.value })
-    });
+      body: JSON.stringify({ length: textLength.value }),
+    })
     if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`Job creation failed with status ${response.status}: ${errorText}`);
+      const errorText = await response.text()
+      throw new Error(`Job creation failed with status ${response.status}: ${errorText}`)
     }
-    jobResponse.value = await response.json();
-    console.log('Job created:', jobResponse.value);
+    jobResponse.value = await response.json()
+    console.info('Job created:', jobResponse.value)
   } catch (err) {
-    console.error('Job creation error:', err);
-    jobError.value = err instanceof Error ? err.message : 'Unknown error';
-    jobResponse.value = null;
+    console.error('Job creation error:', err)
+    jobError.value = err instanceof Error ? err.message : 'Unknown error'
+    jobResponse.value = null
   }
 }
 
 // Connect to WebSocket for job updates
 function connectWebSocket() {
   if (ws) {
-    return;
+    return
   }
 
-  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const wsUrl = `${protocol}//${new URL(apiUrl).host}/api/ws/jobs`;
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+  const wsUrl = `${protocol}//${new URL(apiUrl).host}/api/ws/jobs`
 
-  console.log('Connecting to WebSocket:', wsUrl);
+  console.info('Connecting to WebSocket:', wsUrl)
 
   try {
-    ws = new WebSocket(wsUrl);
+    ws = new WebSocket(wsUrl)
 
     ws.onopen = () => {
-      console.log('WebSocket connected');
-      wsConnected.value = true;
-    };
+      console.info('WebSocket connected')
+      wsConnected.value = true
+    }
 
     ws.onmessage = (event) => {
       try {
-        const update = JSON.parse(event.data) as JobUpdate;
-        console.log('WebSocket message received:', update);
-        jobUpdates.value.unshift(update);
+        const update = JSON.parse(event.data) as JobUpdate
+        console.info('WebSocket message received:', update)
+        jobUpdates.value.unshift(update)
       } catch (err) {
-        console.error('Error parsing WebSocket message:', err);
+        console.error('Error parsing WebSocket message:', err)
       }
-    };
+    }
 
     ws.onclose = () => {
-      console.log('WebSocket disconnected');
-      wsConnected.value = false;
-      ws = null;
-    };
+      console.info('WebSocket disconnected')
+      wsConnected.value = false
+      ws = null
+    }
 
     ws.onerror = (event) => {
-      console.error('WebSocket error:', event);
-      wsConnected.value = false;
-    };
+      console.error('WebSocket error:', event)
+      wsConnected.value = false
+    }
   } catch (err) {
-    console.error('Error connecting to WebSocket:', err);
+    console.error('Error connecting to WebSocket:', err)
   }
 }
 
 // Disconnect from WebSocket
 function disconnectWebSocket() {
   if (ws) {
-    ws.close();
-    ws = null;
-    wsConnected.value = false;
+    ws.close()
+    ws = null
+    wsConnected.value = false
   }
 }
 
 // Call testApi on component mount
 onMounted(() => {
-  testApi();
-});
+  testApi()
+})
 
 // Clean up WebSocket on component unmount
 onUnmounted(() => {
-  disconnectWebSocket();
-});
+  disconnectWebSocket()
+})
 </script>
