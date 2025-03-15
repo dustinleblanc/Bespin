@@ -1,22 +1,20 @@
-version: '3.8'
-
 services:
   api:
     build:
       context: .
       dockerfile: ./api/Dockerfile
     ports:
-      - "3002:3002"
+      - "3002:8080"
     environment:
       - DB_HOST=postgres
       - DB_PORT=5432
       - DB_USER=postgres
-      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_PASSWORD=${DB_PASSWORD:?DB_PASSWORD is required}
       - DB_NAME=bespin
       - REDIS_URL=redis://redis:6379
-      - GITHUB_WEBHOOK_SECRET=${GITHUB_WEBHOOK_SECRET}
-      - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET}
-      - SENDGRID_WEBHOOK_SECRET=${SENDGRID_WEBHOOK_SECRET}
+      - GITHUB_WEBHOOK_SECRET=${GITHUB_WEBHOOK_SECRET:?GITHUB_WEBHOOK_SECRET is required}
+      - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET:?STRIPE_WEBHOOK_SECRET is required}
+      - SENDGRID_WEBHOOK_SECRET=${SENDGRID_WEBHOOK_SECRET:?SENDGRID_WEBHOOK_SECRET is required}
     depends_on:
       postgres:
         condition: service_healthy
@@ -25,7 +23,7 @@ services:
     networks:
       - bespin-network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3002/api/"]
+      test: ["CMD", "curl", "-f", "http://localhost:8080/api/"]
       interval: 10s
       timeout: 5s
       retries: 3
@@ -86,6 +84,7 @@ services:
     ports:
       - "5432:5432"
     environment:
+      - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=${DB_PASSWORD}
       - POSTGRES_DB=bespin
     volumes:
@@ -95,8 +94,10 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+      start_period: 10s
     networks:
       - bespin-network
+    restart: unless-stopped
 
 networks:
   bespin-network:
