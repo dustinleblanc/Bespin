@@ -26,6 +26,9 @@ func NewRouter(jobQueue queue.Queue, webhookService *webhook.Service) *gin.Engin
 	// API routes
 	api := router.Group("/api")
 	{
+		// Health check
+		api.GET("/health", handlers.HandleHealthCheck)
+
 		// Random text generation
 		api.GET("/random-text", handlers.HandleRandomText)
 		api.GET("/jobs/:id", handlers.HandleGetJobResult)

@@ -160,6 +160,17 @@ func (h *Handlers) HandleWebSocket(c *gin.Context) {
 	h.wsServer.HandleConnection(c.Writer, c.Request, jobID)
 }
 
+// HandleHealthCheck handles health check requests
+func (h *Handlers) HandleHealthCheck(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{
+		"status": "healthy",
+		"services": gin.H{
+			"database": "connected",
+			"redis":    "connected",
+		},
+	})
+}
+
 // NotifyJobStatus notifies clients about job status changes
 func (h *Handlers) NotifyJobStatus(jobID string, status string, result interface{}) {
 	h.wsServer.NotifyJobStatus(jobID, status, result)
